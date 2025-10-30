@@ -12,7 +12,24 @@ Failed: error occurred while running deploy command
 
 The deployment is trying to run `dist` as a command. Instead, you need to:
 
-### Quick Solution - Use Cloudflare Pages CLI
+### Quick Solution - Use Vercel CLI (Recommended)
+
+```bash
+# 1. Install Vercel CLI
+npm install -g vercel
+
+# 2. Login to Vercel
+vercel login
+
+# 3. Deploy
+vercel --prod
+```
+
+**Your URL will be:** `https://wordhex.vercel.app`
+
+---
+
+### Alternative - Use Cloudflare Pages CLI
 
 ```bash
 # 1. Install Wrangler
@@ -75,11 +92,11 @@ netlify deploy --prod --dir=dist
 
 ## After Deployment
 
-1. **Copy your deployment URL**
+1. **Copy your deployment URL** (e.g., `https://wordhex.vercel.app`)
 2. **Configure Discord:**
    - https://discord.com/developers/applications/1433031616262832239
-   - Activities → URL Mappings → Add: `/` → `https://your-url.com`
-   - OAuth2 → Redirects → Add: `https://your-url.com`
+   - Activities → URL Mappings → Add: `/` → `https://wordhex.vercel.app`
+   - OAuth2 → Redirects → Add: `https://wordhex.vercel.app`
 3. **Test in Discord!**
 
 ---

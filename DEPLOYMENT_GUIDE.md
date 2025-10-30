@@ -6,7 +6,38 @@ Your Discord Activity needs to be hosted publicly for users to access it. Here's
 
 ---
 
-## Option 1: Cloudflare Pages (Recommended)
+## Option 1: Vercel (Recommended)
+
+### Step 1: Deploy to Vercel
+
+1. **Create Vercel Account**
+   - Go to [vercel.com](https://vercel.com)
+   - Sign up with GitHub
+
+2. **Import Project**
+   - Click **"Add New"** → **"Project"**
+   - Select your repository
+
+3. **Configure Project**
+   ```
+   Framework Preset: Vite
+   Build Command: npm run build
+   Output Directory: dist
+   Install Command: npm install
+   ```
+
+4. **Add Environment Variables**
+   - `VITE_SUPABASE_URL`: https://sbnhrfnmediitmkmzhfa.supabase.co
+   - `VITE_SUPABASE_ANON_KEY`: your-anon-key
+   - `VITE_DISCORD_CLIENT_ID`: 1433031616262832239
+
+5. **Deploy**
+   - Click **"Deploy"**
+   - Copy your URL: `https://wordhex.vercel.app`
+
+---
+
+## Option 2: Cloudflare Pages
 
 ### Step 1: Deploy to Cloudflare Pages
 
@@ -39,7 +70,7 @@ Your Discord Activity needs to be hosted publicly for users to access it. Here's
 
 ---
 
-## Option 2: Netlify
+## Option 3: Netlify
 
 ### Step 1: Deploy to Netlify
 
@@ -72,37 +103,6 @@ Your Discord Activity needs to be hosted publicly for users to access it. Here's
 
 ---
 
-## Option 3: Vercel
-
-### Step 1: Deploy to Vercel
-
-1. **Create Vercel Account**
-   - Go to [vercel.com](https://vercel.com)
-   - Sign up with GitHub
-
-2. **Import Project**
-   - Click **"Add New"** → **"Project"**
-   - Select your repository
-
-3. **Configure Project**
-   ```
-   Framework Preset: Vite
-   Build Command: npm run build
-   Output Directory: dist
-   Install Command: npm install
-   ```
-
-4. **Add Environment Variables**
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-   - `VITE_DISCORD_CLIENT_ID`
-
-5. **Deploy**
-   - Click **"Deploy"**
-   - Copy your URL: `https://wordhex.vercel.app`
-
----
-
 ## Step 2: Configure Discord Developer Portal
 
 Once deployed, configure your Discord Application:
@@ -122,15 +122,15 @@ Visit: https://discord.com/developers/applications/1433031616262832239
 3. Under **"URL Mappings"**:
    - Click **"Add URL Mapping"**
    - **Prefix**: `/`
-   - **Target**: `https://your-deployed-url.com` (your Cloudflare/Netlify/Vercel URL)
+   - **Target**: `https://wordhex.vercel.app` (or your deployed URL)
    - Click **"Save"**
 
 ### 3. Configure OAuth2
 
 1. Click **"OAuth2"** in left sidebar
 2. Under **"Redirects"**:
-   - Add: `https://your-deployed-url.com`
-   - Add: `https://your-deployed-url.com/`
+   - Add: `https://wordhex.vercel.app`
+   - Add: `https://wordhex.vercel.app/`
 3. Click **"Save Changes"**
 
 ### 4. Set Application Icon (Optional)

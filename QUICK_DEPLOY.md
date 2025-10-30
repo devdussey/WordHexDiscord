@@ -4,7 +4,20 @@
 
 ### 1. Deploy Your App (Choose One)
 
-#### Option A: Cloudflare Pages (Fastest)
+#### Option A: Vercel (Recommended)
+```bash
+# Install Vercel CLI
+npm install -g vercel
+
+# Login to Vercel
+vercel login
+
+# Deploy
+vercel --prod
+```
+Your URL will be: `https://wordhex.vercel.app`
+
+#### Option B: Cloudflare Pages
 ```bash
 # Install Wrangler CLI
 npm install -g wrangler
@@ -18,7 +31,7 @@ wrangler pages deploy dist --project-name=wordhex
 ```
 Your URL will be: `https://wordhex.pages.dev`
 
-#### Option B: Netlify CLI
+#### Option C: Netlify CLI
 ```bash
 # Install Netlify CLI
 npm install -g netlify-cli
@@ -30,9 +43,9 @@ netlify login
 netlify deploy --prod
 ```
 
-#### Option C: GitHub + Auto Deploy
+#### Option D: GitHub + Auto Deploy
 1. Push code to GitHub
-2. Visit [Cloudflare Pages](https://pages.cloudflare.com) or [Netlify](https://netlify.com)
+2. Visit [Vercel](https://vercel.com), [Cloudflare Pages](https://pages.cloudflare.com), or [Netlify](https://netlify.com)
 3. Click "New Project" → Connect GitHub
 4. Select your repo
 5. Add environment variables:
@@ -51,9 +64,9 @@ netlify deploy --prod
 2. Click **"Activities"** tab
 3. Under **"URL Mappings"**, click **"Add URL Mapping"**:
    - Prefix: `/`
-   - Target: `https://your-deployed-url.pages.dev`
+   - Target: `https://wordhex.vercel.app` (or your deployed URL)
 4. Click **"OAuth2"** tab
-5. Add redirect URL: `https://your-deployed-url.pages.dev`
+5. Add redirect URL: `https://wordhex.vercel.app` (or your deployed URL)
 6. Click **"Save Changes"**
 
 ---

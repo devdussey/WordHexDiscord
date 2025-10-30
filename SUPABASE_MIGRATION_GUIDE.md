@@ -233,9 +233,10 @@ All endpoints now use UUID user IDs:
 - Ensure `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set
 
 ### Backend (Node.js Server)
-- Deploy to Railway, Render, Heroku, or similar
+- Deploy to Vercel (as serverless functions), Render, Heroku, or similar
 - Set all environment variables including `SUPABASE_SERVICE_ROLE_KEY`
 - Ensure the server can make HTTPS requests to Supabase
+- For Vercel deployment, use the `/api` directory for serverless functions
 
 ## Next Steps
 

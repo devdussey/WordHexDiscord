@@ -17,7 +17,15 @@
 
 Choose ONE option:
 
-#### Option A: Cloudflare Pages (Recommended)
+#### Option A: Vercel (Recommended)
+```bash
+npm install -g vercel
+vercel login
+vercel --prod
+```
+✅ Your URL: `https://wordhex.vercel.app`
+
+#### Option B: Cloudflare Pages
 ```bash
 npm install -g wrangler
 wrangler login
@@ -26,18 +34,12 @@ wrangler pages deploy dist --project-name=wordhex
 ```
 ✅ Your URL: `https://wordhex.pages.dev`
 
-#### Option B: Netlify (Easiest)
+#### Option C: Netlify
 1. Go to [netlify.com](https://netlify.com)
 2. Click "New site from Git"
 3. Connect GitHub repo
 4. Add environment variables (see below)
 5. Deploy
-
-#### Option C: Vercel
-1. Go to [vercel.com](https://vercel.com)
-2. Import Git repository
-3. Add environment variables (see below)
-4. Deploy
 
 **Environment Variables to Add:**
 ```
@@ -61,13 +63,13 @@ VITE_DISCORD_CLIENT_ID=1433031616262832239
    - Under "URL Mappings":
      - Click "Add URL Mapping"
      - Prefix: `/`
-     - Target: `https://your-deployed-url.com` (from Step 1)
+     - Target: `https://wordhex.vercel.app` (your deployment URL from Step 1)
      - Click "Save"
 
 3. **Click "OAuth2" Tab**
    - Under "Redirects", add:
-     - `https://your-deployed-url.com`
-     - `https://your-deployed-url.com/`
+     - `https://wordhex.vercel.app`
+     - `https://wordhex.vercel.app/`
    - Click "Save Changes"
 
 4. **Optional: Add App Icon**
