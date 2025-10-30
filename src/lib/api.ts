@@ -1,5 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001/ws';
+// WebSockets are not supported on Vercel serverless functions
+// Use Supabase Realtime for real-time features instead
+// const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001/ws';
 
 let authToken: string | null = localStorage.getItem('auth_token');
 
