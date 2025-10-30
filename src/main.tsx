@@ -91,39 +91,23 @@ async function initializeDiscordSDK(clientId: string) {
   debug('Starting Discord SDK initialization...');
   await waitForDOMLoaded();
 
-  // Create container first
-  const container = document.createElement('div');
-  container.id = 'discord-sdk-container';
-  container.style.position = 'fixed';
-  container.style.top = '-9999px';
-  document.body.appendChild(container);
-  debug('Created SDK container');
-
-  // Initialize SDK
+  // Initialize SDK - no container needed for v2.4.0
   try {
-    debug('Creating Discord SDK instance...');
+    debug('Creating Discord SDK instance with clientId:', clientId);
     const sdk = new DiscordSDK(clientId);
-    
-    // Set a reasonable timeout for initialization
-    const timeoutMs = 15000; // Increased timeout for slower connections
-    
-    await Promise.race([
-      sdk.ready().then(() => {
-        debug('Discord SDK ready() completed');
-      }),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Discord SDK initialization timeout')), timeoutMs)
-      )
-    ]);
 
-    // At this point, the SDK is ready to use
-    debug('Discord SDK ready, checking connectivity...');
+    debug('Calling sdk.ready()...');
+    await sdk.ready();
+
+    debug('Discord SDK ready() completed successfully');
     return sdk;
   } catch (error) {
     console.error('Discord SDK initialization error:', {
       message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
       origin: window.location.origin,
-      clientId
+      clientId,
+      userAgent: navigator.userAgent
     });
     throw error;
   }
@@ -152,9 +136,19 @@ async function initializeApp() {
   });
 
   if (frameId && clientId) {
+    // Initialize Discord with timeout to prevent hanging
+    const discordInitTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Discord SDK timeout after 10s')), 10000)
+    );
+
     try {
       trackEvent('discord_sdk_init_start');
-      discord = await initializeDiscordSDK(clientId);
+
+      discord = await Promise.race([
+        initializeDiscordSDK(clientId),
+        discordInitTimeout
+      ]) as any;
+
       debug('Discord SDK initialized successfully');
       trackEvent('discord_sdk_init_success');
 
@@ -180,7 +174,7 @@ async function initializeApp() {
       }
     } catch (discordError) {
       // Log but don't throw - app should work without Discord
-      console.warn(
+      console.error(
         'Discord integration disabled:',
         discordError instanceof Error ? discordError.message : discordError
       );
