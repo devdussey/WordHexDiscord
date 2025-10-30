@@ -135,6 +135,8 @@ async function initializeApp() {
   const frameId = getQueryParam('frame_id');
   const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
 
+  debug('Discord check:', { frameId: !!frameId, clientId: !!clientId, actualClientId: clientId });
+
   if (frameId && clientId) {
     try {
       discord = await initializeDiscordSDK(clientId);
@@ -164,6 +166,7 @@ async function initializeApp() {
     }
   } else {
     debug('Running in standalone mode - Discord features will be limited');
+    debug('Missing:', !frameId ? 'frame_id' : '', !clientId ? 'client_id' : '');
   }
 
   window.onerror = (message, source, lineno, colno, error) => {

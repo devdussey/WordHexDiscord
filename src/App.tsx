@@ -42,7 +42,11 @@ function App() {
   };
 
   const handleStartLobby = () => {
-    setCurrentPage('play');
+    // Generate a 4-digit code
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+    setLobbyId(code);
+    setIsHost(true);
+    setCurrentPage('lobby-room');
   };
 
   const handleMatchFound = (matchedLobbyId: string) => {
@@ -58,7 +62,7 @@ function App() {
   const handleJoinSession = (sessionId: string) => {
     setLobbyId(sessionId);
     setIsHost(false);
-    setCurrentPage('play');
+    setCurrentPage('lobby-room');
   };
 
   const renderPage = () => {
