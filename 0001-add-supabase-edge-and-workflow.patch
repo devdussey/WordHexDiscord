@@ -1,0 +1,332 @@
+0001-add-supabase-edge-and-workflow.patch From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001 From: Supabase Assistant assistant@example.com [blocked] Date: Wed, 29 Oct 2025 00:00:00 +0000 Subject: [PATCH] Add Supabase Edge Function and GitHub Actions deploy workflow
+
+.github/workflows/deploy-supabase-edge.yml | 105 ++++++++++++++++++++++++++++++++++++++ supabase/functions/wordhex_discord_api/index.ts | 112 ++++++++++++++++++++++++++++++++++++++++++ 2 files changed, 217 insertions(+) create mode 100644 .github/workflows/deploy-supabase-edge.yml create mode 100644 supabase/functions/wordhex_discord_api/index.ts
+
+diff --git a/.github/workflows/deploy-supabase-edge.yml b/.github/workflows/deploy-supabase-edge.yml new file mode 100644 index 0000000..1111111 --- /dev/null +++ b/.github/workflows/deploy-supabase-edge.yml @@ -0,0 +1,105 @@ +name: Deploy Supabase Edge Functions + +on:
+
+push:
+branches:
+SQL Query
+
+
+
+- main
+
+ERROR: syntax error at or near "-"
++jobs:
+
+build-and-deploy:
+runs-on: ubuntu-latest
+steps:
+SQL Query
+
+
+
+- name: Checkout repo
+
+SQL Query
+
+
+
+uses: actions/checkout@v4
+
+SQL Query
+
+
+
+- name: Install Node.js (for supabase CLI JS runner)
+
+SQL Query
+
+
+
+uses: actions/setup-node@v4
+
+SQL Query
+
+
+
+with:
+
+SQL Query
+
+
+
+node-version: '18'
+
+SQL Query
+
+
+
+- name: Install Supabase CLI
+
+SQL Query
+
+
+
+run: |
+
+SQL Query
+
+
+
+curl -sL https://github.com/supabase/cli/releases/latest/download/supabase_$(uname -s)_x86_64.tar.gz \
+
+SQL Query
+
+
+
+| tar -xz -C /tmp
+
+SQL Query
+
+
+
+sudo mv /tmp/supabase /usr/local/bin/supabase
+
+SQL Query
+
+
+
+supabase --version
+
+SQL Query
+
+
+
+- name: Configure Supabase CLI (auth)
+
+SQL Query
+
+
+
+env:
+
+SQL Query
+
+
+
+SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+
+SQL Query
+
+
+
+SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+SQL Query
+
+
+
+run: |
+
+SQL Query
+
+
+
+supabase login --service-role $SUPABASE_SERVICE_ROLE_KEY || true
+
+SQL Query
+
+
+
+mkdir -p supabase/functions
+
+SQL Query
+
+
+
+echo "Supabase CLI configured"
+
+SQL Query
+
+
+
+- name: Deploy Edge Functions
+
+SQL Query
+
+
+
+env:
+
+SQL Query
+
+
+
+SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+
+SQL Query
+
+
+
+SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+SQL Query
+
+
+
+run: |
+
+SQL Query
+
+
+
+supabase functions deploy --no-verify-jwt --project-ref "${SUPABASE_URL##*/}" || supabase functions deploy --project-ref "${SUPABASE_URL##*/}"
+
++_
+
+diff --git a/supabase/functions/wordhex_discord_api/index.ts b/supabase/functions/wordhex_discord_api/index.ts new file mode 100644 index 0000000..2222222 --- /dev/null +++ b/supabase/functions/wordhex_discord_api/index.ts @@ -0,0 +1,112 @@ +console.info('wordhex_discord_api starting'); + +Deno.serve(async (req: Request) => {
+
+try {
+const authHeader = req.headers.get('authorization') || '';
+if (!authHeader.startsWith('Bearer ')) {
+SQL Query
+
+
+
+return new Response(JSON.stringify({ error: 'Missing or invalid Authorization header' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+}
+const token = authHeader.split(' ')[1];
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+SQL Query
+
+
+
+return new Response(JSON.stringify({ error: 'Server misconfiguration: missing SUPABASE_URL or SUPABASE_ANON_KEY' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+
+}
+// Validate token with Supabase Auth
+const resp = await fetch(${SUPABASE_URL}/auth/v1/user, {
+SQL Query
+
+
+
+method: 'GET',
+
+SQL Query
+
+
+
+headers: { 'Authorization': `Bearer ${token}`, 'apikey': SUPABASE_ANON_KEY }
+
+});
+if (!resp.ok) {
+SQL Query
+
+
+
+return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+}
+const user = await resp.json();
+const url = new URL(req.url);
+if (req.method === 'GET' && url.pathname.endsWith('/me')) {
+SQL Query
+
+
+
+return new Response(JSON.stringify({ uid: user.id, email: user.email }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+}
+if (req.method === 'POST' && url.pathname.endsWith('/profile')) {
+SQL Query
+
+
+
+const body = await req.json();
+
+SQL Query
+
+
+
+const { display_name, avatar_url } = body;
+
+SQL Query
+
+
+
+// Upsert into public.users via PostgREST using the caller's JWT
+
+SQL Query
+
+
+
+const insertResp = await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+
+SQL Query
+
+
+
+method: 'POST',
+
+SQL Query
+
+
+
+headers: {
+
+SQL Query
+
+
+
+'Content-Type': 'application/json',
+
+SQL Query
+
+
+
+'Authorization': `Bearer ${token}`,
+
+SQL Query
+
+
+
+'apikey': SUPABASE_ANON_KEY,
+
+SQL Query
+
+
+
+'Prefer': 'resolution=merge-duplicates,return=representation'
+
+SQL Query
+
+
+
+},
+
+SQL Query
+
+
+
+body: JSON.stringify({ id: user.id, username: display_name || user.email, avatar_url })
+
+SQL Query
+
+
+
+});
+
+SQL Query
+
+
+
+const insertText = await insertResp.text();
+
+SQL Query
+
+
+
+return new Response(insertText, { status: insertResp.status, headers: { 'Content-Type': 'application/json' } });
+
+}
+return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+} catch (err) {
+console.error(err);
+return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+} +});
+-- 2.39.2
