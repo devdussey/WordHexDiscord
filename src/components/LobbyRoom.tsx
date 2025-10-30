@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Users, X, Copy, Check, Play } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { api, realtime } from '../services/api';
+import { useError } from '../contexts/ErrorContext';
+import { ErrorSeverity, ErrorType } from '../types/errors';
+import type { LobbySummary, LobbyPlayer, MatchSummary, RealtimeMessage } from '../types/api';
 
 interface LobbyRoomProps {
   lobbyId: string;
@@ -8,109 +11,92 @@ interface LobbyRoomProps {
   playerId: string;
   playerName: string;
   isHost: boolean;
-  onStartGame: (matchId: string, gridData: any) => void;
+  onStartGame: (match: MatchSummary) => void;
   onLeave: () => void;
 }
 
-interface Player {
-  id: string;
-  name: string;
-  avatar_url?: string;
-  isReady: boolean;
-  isHost: boolean;
-}
-
-export function LobbyRoom({ lobbyId, lobbyCode, playerId, playerName, isHost, onStartGame, onLeave }: LobbyRoomProps) {
-  const [players, setPlayers] = useState<Player[]>([]);
+export function LobbyRoom({
+  lobbyId,
+  lobbyCode,
+  playerId,
+  playerName,
+  isHost,
+  onStartGame,
+  onLeave,
+}: LobbyRoomProps) {
+  const { showError, logError } = useError();
+  const [lobby, setLobby] = useState<LobbySummary | null>(null);
   const [copied, setCopied] = useState(false);
-  const [myReady, setMyReady] = useState(isHost);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
 
-  // Fetch initial lobby players
-  useEffect(() => {
-    fetchLobbyPlayers();
-  }, [lobbyId]);
+  const players: LobbyPlayer[] = lobby?.players ?? [];
+  const me = players.find((player) => player.userId === playerId);
+  const myReady = me?.ready ?? false;
+  const amHost = lobby?.hostId === playerId || isHost;
 
-  // Subscribe to real-time updates
-  useEffect(() => {
-    const channel = supabase
-      .channel(`lobby:${lobbyId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'lobby_players',
-          filter: `lobby_id=eq.${lobbyId}`
-        },
-        () => {
-          fetchLobbyPlayers();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'lobbies',
-          filter: `id=eq.${lobbyId}`
-        },
-        async (payload) => {
-          // Check if game is starting
-          if (payload.new.status === 'in_progress' && payload.new.match_id) {
-            const { data: match } = await supabase
-              .from('matches')
-              .select('*')
-              .eq('id', payload.new.match_id)
-              .single();
+  const canStart = useMemo(() => {
+    if (!lobby) return false;
+    if (!amHost) return false;
+    if (lobby.players.length < 2) return false;
+    return lobby.players.every((player) => player.ready);
+  }, [lobby, amHost]);
 
-            if (match) {
-              onStartGame(match.id, match.grid_data);
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [lobbyId]);
-
-  const fetchLobbyPlayers = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('lobby_players')
-        .select('user_id, username, avatar_url, is_ready, is_host')
-        .eq('lobby_id', lobbyId)
-        .order('joined_at', { ascending: true });
-
-      if (error) throw error;
-
-      if (data) {
-        setPlayers(
-          data.map((p) => ({
-            id: p.user_id,
-            name: p.username,
-            avatar_url: p.avatar_url,
-            isReady: p.is_ready,
-            isHost: p.is_host
-          }))
-        );
-
-        // Update my ready status
-        const me = data.find((p) => p.user_id === playerId);
-        if (me) {
-          setMyReady(me.is_ready);
+  const handleLobbyUpdate = useCallback(
+    (payload: RealtimeMessage) => {
+      if (payload.type === 'lobby:update') {
+        const updatedLobby = payload.lobby as LobbySummary | undefined;
+        if (updatedLobby?.id === lobbyId) {
+          setLobby(updatedLobby);
         }
       }
+      if (payload.type === 'lobby:deleted' && payload.lobbyId === lobbyId) {
+        showError({
+          message: 'Lobby closed by host',
+          severity: ErrorSeverity.MEDIUM,
+          type: ErrorType.GAMEPLAY,
+        });
+        onLeave();
+      }
+      if (payload.type === 'match:started') {
+        const match = payload.match as MatchSummary | undefined;
+        if (match?.id) {
+          setStarting(false);
+          onStartGame({
+            ...match,
+            lobbyId: match.lobbyId ?? lobbyId,
+            players: match.players ?? lobby?.players ?? [],
+          });
+        }
+      }
+    },
+    [lobbyId, lobby, onLeave, onStartGame, showError]
+  );
+
+  const fetchLobby = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await api.lobby.get(lobbyId);
+      setLobby(response);
     } catch (error) {
-      console.error('Failed to fetch lobby players:', error);
+      logError(error, ErrorType.NETWORK, ErrorSeverity.HIGH, 'Failed to load lobby');
+      onLeave();
     } finally {
       setLoading(false);
     }
-  };
+  }, [lobbyId, logError, onLeave]);
+
+  useEffect(() => {
+    fetchLobby();
+  }, [fetchLobby]);
+
+  useEffect(() => {
+    const channel = `lobby:${lobbyId}`;
+    realtime.subscribe(channel, handleLobbyUpdate);
+    return () => {
+      realtime.unsubscribe(channel, handleLobbyUpdate);
+    };
+  }, [lobbyId, handleLobbyUpdate]);
 
   const copyCode = () => {
     navigator.clipboard.writeText(lobbyCode);
@@ -119,214 +105,176 @@ export function LobbyRoom({ lobbyId, lobbyCode, playerId, playerName, isHost, on
   };
 
   const toggleReady = async () => {
-    const newReady = !myReady;
-    setMyReady(newReady);
-
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-      const response = await fetch(`${API_URL}/lobby/ready`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lobbyId,
-          userId: playerId,
-          isReady: newReady
-        })
+      const response = await api.lobby.ready({
+        lobbyId,
+        userId: playerId,
+        ready: !myReady,
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to update ready status');
+      if (response.lobby) {
+        setLobby(response.lobby);
       }
     } catch (error) {
-      console.error('Failed to update ready status:', error);
-      setMyReady(!newReady); // Revert on error
+      logError(error, ErrorType.NETWORK, ErrorSeverity.MEDIUM, 'Failed to update ready status');
     }
   };
 
-  const handleStartGame = async () => {
+  const handleStartGameClick = async () => {
     if (!canStart) return;
-
     setStarting(true);
     try {
-      // Generate grid data
-      const { generateGrid } = await import('../utils/gridGenerator');
-      const gridData = generateGrid();
-
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-      const response = await fetch(`${API_URL}/lobby/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lobbyId,
-          userId: playerId,
-          gridData
-        })
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to start game');
+      const response = await api.lobby.start({ lobbyId });
+      if (response.match) {
+        if (response.lobby) {
+          setLobby(response.lobby);
+        }
+        setStarting(false);
+        onStartGame(response.match);
+      } else {
+        throw new Error('Match did not start properly');
       }
-
-      const { match } = await response.json();
-      onStartGame(match.id, gridData);
     } catch (error) {
-      console.error('Failed to start game:', error);
-      alert(error instanceof Error ? error.message : 'Failed to start game');
       setStarting(false);
+      logError(error, ErrorType.NETWORK, ErrorSeverity.HIGH, 'Failed to start match');
     }
   };
 
-  const handleLeave = async () => {
+  const handleLeaveLobby = async () => {
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-      await fetch(`${API_URL}/lobby/leave`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lobbyId,
-          userId: playerId
-        })
-      });
+      await api.lobby.leave({ lobbyId, userId: playerId });
     } catch (error) {
-      console.error('Failed to leave lobby:', error);
+      logError(error, ErrorType.NETWORK, ErrorSeverity.MEDIUM, 'Failed to leave lobby', { lobbyId });
+    } finally {
+      onLeave();
     }
-    onLeave();
   };
 
-  const canStart = isHost && players.length >= 2 && players.every(p => p.isReady);
+  if (loading && !lobby) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-fuchsia-950 flex items-center justify-center p-8">
+        <div className="text-center text-purple-200">
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-purple-400 border-t-transparent mx-auto mb-6" />
+          Loading lobby...
+        </div>
+      </div>
+    );
+  }
+
+  if (!lobby) {
+    return null;
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-fuchsia-950 flex items-center justify-center p-8">
-      <div className="max-w-3xl w-full">
-        <div className="bg-purple-900/30 rounded-2xl p-8 shadow-2xl border-4 border-purple-700/50">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <Users className="w-8 h-8 text-green-400" />
-              <h2 className="text-3xl font-bold text-white">Game Lobby</h2>
-            </div>
-            <button
-              onClick={handleLeave}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg
-                       transition-colors font-semibold flex items-center gap-2"
-            >
-              <X className="w-5 h-5" />
-              Leave
-            </button>
-          </div>
+    <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-fuchsia-950 p-8">
+      <div className="max-w-5xl mx-auto">
+        <div className="flex justify-between items-center mb-6">
+          <button
+            onClick={handleLeaveLobby}
+            className="px-6 py-3 bg-purple-800/50 hover:bg-purple-700/50 text-white rounded-xl
+                     font-semibold transition-all flex items-center gap-2 shadow-lg border-2 border-purple-600/30"
+          >
+            <X className="w-5 h-5" />
+            Leave Lobby
+          </button>
 
-          {/* Lobby Code */}
-          <div className="mb-8 text-center">
-            <p className="text-purple-300 mb-2 text-sm">Share this code with friends:</p>
-            <div className="flex items-center justify-center gap-3">
-              <div className="bg-purple-950/70 px-8 py-4 rounded-xl border-2 border-purple-500">
-                <span className="text-5xl font-bold text-white tracking-widest font-mono">
-                  {lobbyCode}
-                </span>
-              </div>
+          <div className="bg-purple-900/40 rounded-lg px-4 py-2 border border-purple-600/30">
+            <p className="text-purple-300 text-sm">Lobby Code</p>
+            <div className="flex items-center gap-3">
+              <span className="text-white text-2xl font-mono tracking-widest">{lobby.code}</span>
               <button
                 onClick={copyCode}
-                className="p-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors"
+                className="p-2 bg-purple-700/50 hover:bg-purple-600/60 rounded-lg transition-colors"
                 title="Copy code"
               >
-                {copied ? (
-                  <Check className="w-6 h-6 text-white" />
-                ) : (
-                  <Copy className="w-6 h-6 text-white" />
-                )}
+                {copied ? <Check className="w-5 h-5 text-white" /> : <Copy className="w-5 h-5 text-white" />}
               </button>
+            </div>
+            <p className="text-purple-400 text-xs mt-2 text-right">Signed in as {playerName}</p>
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-[2fr_1fr] gap-6">
+          <div className="bg-purple-900/30 rounded-2xl p-6 shadow-xl border-4 border-purple-700/40">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-3xl font-bold text-white">Players</h2>
+              <div className="flex items-center gap-2 text-purple-200">
+                <Users className="w-5 h-5" />
+                <span>{players.length}/8</span>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {players.map((player) => (
+                <div
+                  key={player.userId}
+                  className="bg-purple-950/50 p-4 rounded-lg border-2 border-purple-700/60 flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold">
+                      {player.username.slice(0, 1).toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-semibold">{player.username}</span>
+                        {player.isHost && (
+                          <span className="text-yellow-400 text-xs font-bold px-2 py-0.5 bg-yellow-900/40 rounded">
+                            HOST
+                          </span>
+                        )}
+                        {player.userId === playerId && (
+                          <span className="text-purple-300 text-xs">(You)</span>
+                        )}
+                      </div>
+                      <p className="text-purple-300 text-xs">
+                        Joined {new Date(player.joinedAt).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {player.ready ? (
+                      <span className="text-green-400 font-semibold">Ready</span>
+                    ) : (
+                      <span className="text-gray-400">Not Ready</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {Array.from({ length: Math.max(0, 8 - players.length) }).map((_, index) => (
+                <div
+                  key={`empty-${index}`}
+                  className="bg-purple-950/20 p-4 rounded-lg border-2 border-dashed border-purple-700/30 text-center text-purple-500"
+                >
+                  Waiting for player...
+                </div>
+              ))}
             </div>
           </div>
 
-          {/* Players List */}
-          <div className="mb-6">
-            <h3 className="text-xl font-bold text-white mb-4">
-              Players ({players.length}/8)
-            </h3>
-            {loading ? (
-              <div className="text-center text-purple-400 py-8">Loading players...</div>
-            ) : (
-              <div className="space-y-2">
-                {players.map((player) => (
-                  <div
-                    key={player.id}
-                    className="bg-purple-950/50 p-4 rounded-lg border-2 border-purple-600/30
-                             flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      {player.avatar_url ? (
-                        <img
-                          src={player.avatar_url}
-                          alt={player.name}
-                          className="w-10 h-10 rounded-full border-2 border-purple-400"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500
-                                      flex items-center justify-center">
-                          <span className="text-white font-bold">
-                            {player.name.charAt(0).toUpperCase()}
-                          </span>
-                        </div>
-                      )}
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-white font-semibold">{player.name}</span>
-                          {player.isHost && (
-                            <span className="text-yellow-400 text-xs font-bold px-2 py-0.5 bg-yellow-900/30 rounded">
-                              HOST
-                            </span>
-                          )}
-                          {player.id === playerId && (
-                            <span className="text-purple-400 text-sm">(You)</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {player.isReady ? (
-                        <span className="text-green-400 font-semibold">Ready</span>
-                      ) : (
-                        <span className="text-gray-400">Not Ready</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
+          <div className="bg-purple-900/30 rounded-2xl p-6 shadow-xl border-4 border-purple-700/40 space-y-4">
+            <div>
+              <h3 className="text-xl font-bold text-white mb-2">Lobby Settings</h3>
+              <p className="text-purple-300 text-sm">Host: {players.find((p) => p.isHost)?.username}</p>
+            </div>
 
-                {/* Empty slots */}
-                {Array.from({ length: 8 - players.length }).map((_, i) => (
-                  <div
-                    key={`empty-${i}`}
-                    className="bg-purple-950/30 p-4 rounded-lg border-2 border-purple-600/20
-                             flex items-center justify-center opacity-50"
-                  >
-                    <span className="text-purple-400">Waiting for player...</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-4">
-            {!isHost && (
+            {!amHost && (
               <button
                 onClick={toggleReady}
-                className={`flex-1 px-6 py-4 rounded-lg font-bold text-lg transition-all ${
+                className={`w-full px-6 py-4 rounded-lg font-bold text-lg transition-all ${
                   myReady
                     ? 'bg-gray-600 hover:bg-gray-700 text-white'
                     : 'bg-green-600 hover:bg-green-700 text-white'
                 }`}
               >
-                {myReady ? 'Not Ready' : 'Ready Up'}
+                {myReady ? 'Cancel Ready' : 'Ready Up'}
               </button>
             )}
 
-            {isHost && (
+            {amHost && (
               <button
-                onClick={handleStartGame}
+                onClick={handleStartGameClick}
                 disabled={!canStart || starting}
-                className={`flex-1 px-6 py-4 rounded-lg font-bold text-lg transition-all flex items-center justify-center gap-2 ${
+                className={`w-full px-6 py-4 rounded-lg font-bold text-lg transition-all flex items-center justify-center gap-2 ${
                   canStart && !starting
                     ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white'
                     : 'bg-gray-600 text-gray-400 cursor-not-allowed'
@@ -336,15 +284,15 @@ export function LobbyRoom({ lobbyId, lobbyCode, playerId, playerName, isHost, on
                 {starting ? 'Starting...' : 'Start Game'}
               </button>
             )}
-          </div>
 
-          {isHost && !canStart && !starting && (
-            <p className="text-center text-purple-400 text-sm mt-4">
-              {players.length < 2
-                ? 'Need at least 2 players to start'
-                : 'All players must be ready to start'}
-            </p>
-          )}
+            {amHost && !canStart && (
+              <p className="text-purple-300 text-sm text-center">
+                {players.length < 2
+                  ? 'Need at least 2 players to start'
+                  : 'All players must be ready to start'}
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </div>

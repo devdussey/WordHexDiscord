@@ -5,6 +5,15 @@ import { useError } from '../contexts/ErrorContext';
 import { ErrorSeverity, ErrorType } from '../types/errors';
 import type { GameSession, RealtimeMessage } from '../types/api';
 
+interface GameSession {
+  id: string;
+  userId: string;
+  playerName: string;
+  score: number;
+  roundNumber: number;
+  createdAt: string;
+}
+
 interface ActiveSessionsListProps {
   serverId: string;
   onJoinSession: (sessionId: string) => void;

@@ -10,25 +10,46 @@ import { MatchmakingQueue } from './components/MatchmakingQueue';
 import { LobbyRoom } from './components/LobbyRoom';
 import { Leaderboard } from './components/Leaderboard';
 import { MatchHistory } from './components/MatchHistory';
-import { Login } from './components/Login';
 import { useAuth } from './contexts/AuthContext';
 import { useError } from './contexts/ErrorContext';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 import { ErrorNotification, OfflineBanner } from './components/ErrorNotification';
+import { api } from './services/api';
+import { ErrorType, ErrorSeverity } from './types/errors';
+import type { LobbySummary, MatchSummary } from './types/api';
 
-type Page = 'menu' | 'lobby-selection' | 'matchmaking' | 'lobby-room' | 'play' | 'statistics' | 'leaderboard' | 'match-history' | 'options' | 'shop';
+type Page =
+  | 'menu'
+  | 'lobby-selection'
+  | 'matchmaking'
+  | 'lobby-room'
+  | 'play'
+  | 'statistics'
+  | 'leaderboard'
+  | 'match-history'
+  | 'options'
+  | 'shop';
 
 function App() {
-  const { user, getUsername } = useAuth();
-  const { currentError, clearError } = useError();
+  const { user, getUsername, loading } = useAuth();
+  const { currentError, clearError, showError, logError } = useError();
   const networkStatus = useNetworkStatus();
   const [currentPage, setCurrentPage] = useState<Page>('menu');
-  const [lobbyId, setLobbyId] = useState<string | null>(null);
+  const [activeLobby, setActiveLobby] = useState<LobbySummary | null>(null);
   const [isHost, setIsHost] = useState(false);
+  const [currentMatch, setCurrentMatch] = useState<MatchSummary | null>(null);
   const serverId = 'dev-server-123';
 
-  if (!user) {
-    return <Login />;
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-fuchsia-950 flex items-center justify-center p-8">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-purple-400 border-t-transparent mx-auto mb-6" />
+          <h2 className="text-3xl font-bold text-white">Connecting to WordHex…</h2>
+          <p className="text-purple-200 mt-2">Getting your player profile ready.</p>
+        </div>
+      </div>
+    );
   }
 
   const playerName = getUsername();
@@ -42,28 +63,57 @@ function App() {
     setCurrentPage('matchmaking');
   };
 
-  const handleStartLobby = () => {
-    // Generate a 4-digit code
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
-    setLobbyId(code);
-    setIsHost(true);
-    setCurrentPage('lobby-room');
+  const handleStartLobby = async () => {
+    try {
+      const response = await api.lobby.create({
+        hostId: playerId,
+        username: playerName,
+        serverId,
+      });
+      const lobby = response?.lobby;
+      if (!lobby) {
+        throw new Error('Failed to create lobby');
+      }
+      setActiveLobby(lobby);
+      setIsHost(true);
+      setCurrentPage('lobby-room');
+    } catch (error) {
+      logError(error, ErrorType.NETWORK, ErrorSeverity.HIGH, 'Could not create lobby');
+    }
   };
 
-  const handleMatchFound = (matchedLobbyId: string) => {
-    setLobbyId(matchedLobbyId);
+  const handleMatchFound = (lobby: LobbySummary) => {
+      setActiveLobby(lobby);
     setIsHost(false);
     setCurrentPage('lobby-room');
   };
 
-  const handleStartGame = () => {
+  const handleStartGame = (match: MatchSummary) => {
+    setCurrentMatch(match);
     setCurrentPage('play');
   };
 
-  const handleJoinSession = (sessionId: string) => {
-    setLobbyId(sessionId);
-    setIsHost(false);
-    setCurrentPage('lobby-room');
+  const handleJoinSession = async (code: string) => {
+    try {
+      const response = await api.lobby.join({
+        code,
+        userId: playerId,
+        username: playerName,
+      });
+      const lobby = response?.lobby;
+      if (!lobby) {
+        throw new Error('Lobby not found');
+      }
+      setActiveLobby(lobby);
+      setIsHost(false);
+      setCurrentPage('lobby-room');
+    } catch (error) {
+      showError({
+        message: error instanceof Error ? error.message : 'Failed to join lobby',
+        severity: ErrorSeverity.MEDIUM,
+        type: ErrorType.NETWORK,
+      });
+    }
   };
 
   const renderPage = () => {
@@ -83,24 +133,42 @@ function App() {
       case 'matchmaking':
         return (
           <MatchmakingQueue
-            playerName={playerName}
             onMatchFound={handleMatchFound}
             onCancel={() => setCurrentPage('lobby-selection')}
+            serverId={serverId}
           />
         );
       case 'lobby-room':
-        return lobbyId ? (
+        return activeLobby ? (
           <LobbyRoom
-            lobbyId={lobbyId}
+            lobbyId={activeLobby.id}
+            lobbyCode={activeLobby.code}
             playerId={playerId}
             playerName={playerName}
             isHost={isHost}
             onStartGame={handleStartGame}
-            onLeave={() => setCurrentPage('menu')}
+            onLeave={() => {
+              setActiveLobby(null);
+              setCurrentMatch(null);
+              setIsHost(false);
+              setCurrentPage('menu');
+            }}
           />
         ) : null;
       case 'play':
-        return <TurnBasedGame onBack={() => setCurrentPage('menu')} serverId={serverId} isHost={isHost} />;
+        return (
+          <TurnBasedGame
+            onBack={() => {
+              setCurrentMatch(null);
+              setActiveLobby(null);
+              setIsHost(false);
+              setCurrentPage('menu');
+            }}
+            serverId={serverId}
+            isHost={isHost}
+            match={currentMatch}
+          />
+        );
       case 'statistics':
         return <Statistics onBack={() => setCurrentPage('menu')} />;
       case 'leaderboard':

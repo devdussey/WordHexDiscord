@@ -1,7 +1,7 @@
 /*
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Embedder-Policy: credentialless
-  Content-Security-Policy: frame-ancestors 'self' https://discord.com https://*.discord.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://discord.com
+  Content-Security-Policy: frame-ancestors 'self' https://discord.com https://*.discord.com; connect-src 'self' ws: wss: https://discord.com
   Access-Control-Allow-Origin: *
   Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE
   Access-Control-Allow-Headers: Content-Type, Authorization, X-Client-Info, Apikey, apikey

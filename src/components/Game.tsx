@@ -7,18 +7,15 @@ import { Tile, GameState } from '../types/game';
 import { generateGrid, isAdjacent } from '../utils/gridGenerator';
 import { calculateScore } from '../utils/scoring';
 import { RotateCcw, Send, Trash2, ArrowLeft } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
 
 const GAME_DURATION = 180;
 
 interface GameProps {
   onBack: () => void;
   serverId?: string;
-  channelId?: string;
 }
 
-export function Game({ onBack, serverId = 'dev-server-123', channelId = 'dev-channel-123' }: GameProps) {
-  const { getUsername } = useAuth();
+export function Game({ onBack, serverId = 'dev-server-123' }: GameProps) {
   const [gameState, setGameState] = useState<GameState>({
     grid: generateGrid(),
     selectedTiles: [],

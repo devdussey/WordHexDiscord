@@ -1,374 +1,399 @@
 import express from 'express';
 import cors from 'cors';
+import dotenv from 'dotenv';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
-import dotenv from 'dotenv';
-import supabase from './supabase.js';
+import { randomUUID } from 'crypto';
+
+import {
+  upsertUser,
+  createGuestUser,
+  createLobby,
+  joinLobby,
+  joinLobbyByCode,
+  getLobbyById,
+  setPlayerReady,
+  leaveLobby,
+  startLobby,
+  createSession,
+  completeSession,
+  joinMatchmaking,
+  leaveMatchmaking,
+  getLeaderboard,
+  getPlayerStats,
+  getMatchHistory,
+  getActiveSessions,
+  recordMatchResults,
+  updateServerRecord,
+  getServerRecord,
+  getMatchmakingSnapshot,
+  onStateEvent,
+} from './state.js';
 
 dotenv.config();
 
 const app = express();
-const server = createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const httpServer = createServer(app);
+const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 app.use(cors());
 app.use(express.json());
 
-const clients = new Map();
+const CHANNEL_MATCHMAKING = 'matchmaking:global';
+
+const channelSubscriptions = new Map(); // channel -> Set<ws>
+
+function subscriptionKey(channel) {
+  return channel.toString();
+}
+
+function subscribe(ws, channel) {
+  const key = subscriptionKey(channel);
+  if (!channelSubscriptions.has(key)) {
+    channelSubscriptions.set(key, new Set());
+  }
+  channelSubscriptions.get(key).add(ws);
+  if (!ws.subscriptions) {
+    ws.subscriptions = new Set();
+  }
+  ws.subscriptions.add(key);
+}
+
+function unsubscribe(ws, channel) {
+  const key = subscriptionKey(channel);
+  if (channelSubscriptions.has(key)) {
+    channelSubscriptions.get(key).delete(ws);
+    if (channelSubscriptions.get(key).size === 0) {
+      channelSubscriptions.delete(key);
+    }
+  }
+  if (ws.subscriptions) {
+    ws.subscriptions.delete(key);
+  }
+}
+
+function broadcast(channel, payload) {
+  const key = subscriptionKey(channel);
+  const subscribers = channelSubscriptions.get(key);
+  if (!subscribers) return;
+  const message = JSON.stringify({ channel: key, ...payload });
+  subscribers.forEach((ws) => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(message);
+    }
+  });
+}
 
 wss.on('connection', (ws) => {
-  console.log('New WebSocket connection');
+  ws.subscriptions = new Set();
 
-  ws.on('message', async (message) => {
-    const data = JSON.parse(message.toString());
-
-    if (data.type === 'auth') {
-      clients.set(data.userId, { ws, username: data.username });
-      ws.userId = data.userId;
+  ws.on('message', (raw) => {
+    try {
+      const message = JSON.parse(raw.toString());
+      if (message.type === 'identify') {
+        ws.userId = message.userId;
+        ws.username = message.username;
+      }
+      if (message.type === 'subscribe') {
+        subscribe(ws, message.channel);
+      }
+      if (message.type === 'unsubscribe') {
+        unsubscribe(ws, message.channel);
+      }
+    } catch (error) {
+      console.error('Failed to handle websocket message', error);
     }
   });
 
   ws.on('close', () => {
-    if (ws.userId) {
-      clients.delete(ws.userId);
+    if (ws.subscriptions) {
+      ws.subscriptions.forEach((channel) => unsubscribe(ws, channel));
     }
   });
 });
 
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { username } = req.body;
-    const discordId = username;
-
-    // Check if user exists
-    let { data: user, error } = await supabase
-      .from('users')
-      .select('id, username, discord_id, coins, gems')
-      .eq('discord_id', discordId)
-      .maybeSingle();
-
-    if (error) throw error;
-
-    // Create user if doesn't exist
-    if (!user) {
-      const { data: newUser, error: insertError } = await supabase
-        .from('users')
-        .insert({
-          username: discordId,
-          discord_id: discordId,
-          coins: 100,
-          gems: 10,
-          cosmetics: []
-        })
-        .select()
-        .single();
-
-      if (insertError) throw insertError;
-
-      // Create player_stats for new user
-      const { error: statsError } = await supabase
-        .from('player_stats')
-        .insert({
-          user_id: newUser.id,
-          total_matches: 0,
-          total_wins: 0,
-          total_score: 0,
-          total_words: 0,
-          best_score: 0,
-          win_streak: 0,
-          best_win_streak: 0
-        });
-
-      if (statsError) {
-        console.error('Failed to create player_stats:', statsError);
-      }
-
-      user = newUser;
-    }
-
-    res.json({
-      token: `user_${user.id}`,
-      user
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Login failed', details: error.message });
+// Broadcast hooks
+onStateEvent('lobby:updated', (lobby) => {
+  if (lobby) {
+    broadcast(`lobby:${lobby.id}`, { type: 'lobby:update', lobby });
+    broadcast(`server:${lobby.serverId}:lobbies`, { type: 'lobby:update', lobby });
   }
 });
 
-app.post('/api/auth/guest', async (req, res) => {
-  try {
-    const guestName = `Guest_${Date.now()}`;
-    const guestDiscordId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+onStateEvent('lobby:deleted', ({ lobbyId }) => {
+  broadcast(`lobby:${lobbyId}`, { type: 'lobby:deleted', lobbyId });
+});
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .insert({
-        username: guestName,
-        discord_id: guestDiscordId,
-        coins: 50,
-        gems: 5,
-        cosmetics: []
-      })
-      .select()
-      .single();
+onStateEvent('matchmaking:updated', (snapshot) => {
+  broadcast(CHANNEL_MATCHMAKING, { type: 'matchmaking:update', snapshot });
+});
 
-    if (error) throw error;
-
-    // Create player_stats for guest user
-    const { error: statsError } = await supabase
-      .from('player_stats')
-      .insert({
-        user_id: user.id,
-        total_matches: 0,
-        total_wins: 0,
-        total_score: 0,
-        total_words: 0,
-        best_score: 0,
-        win_streak: 0,
-        best_win_streak: 0
-      });
-
-    if (statsError) {
-      console.error('Failed to create player_stats:', statsError);
-    }
-
-    res.json({
-      token: `user_${user.id}`,
-      user
-    });
-  } catch (error) {
-    console.error('Guest login error:', error);
-    res.status(500).json({ error: 'Guest login failed', details: error.message });
+onStateEvent('match:started', (match) => {
+  if (match?.lobbyId) {
+    broadcast(`lobby:${match.lobbyId}`, { type: 'match:started', match });
   }
 });
 
-app.post('/api/game/sessions', async (req, res) => {
+onStateEvent('match:completed', (match) => {
+  if (match?.lobbyId) {
+    broadcast(`lobby:${match.lobbyId}`, { type: 'match:completed', match });
+  }
+});
+
+onStateEvent('session:updated', (session) => {
+  broadcast(`sessions:${session.serverId}`, { type: 'sessions:update', session });
+});
+
+onStateEvent('server-record:updated', (record) => {
+  broadcast(`server-record:${record.serverId}`, { type: 'server-record:update', record });
+});
+
+// Routes
+app.post('/api/auth/login', (req, res) => {
   try {
-    const { userId, score, wordsFound, gemsCollected, duration, gridData, serverId, channelId } = req.body;
+    const { discordId, username } = req.body ?? {};
+    if (!discordId && !username) {
+      return res.status(400).json({ error: 'discordId or username required' });
+    }
+    const user = upsertUser({ discordId, username });
+    res.json({ token: user.id, user });
+  } catch (error) {
+    console.error('auth/login error', error);
+    res.status(500).json({ error: 'Failed to login', details: error.message });
+  }
+});
 
-    // Create game session
-    const { data: session, error: sessionError } = await supabase
-      .from('game_sessions')
-      .insert({
-        user_id: userId,
-        score: score || 0,
-        words_found: wordsFound || 0,
-        gems_collected: gemsCollected || 0,
-        duration: duration || 0,
-        grid_data: gridData,
-        server_id: serverId,
-        channel_id: channelId,
-        game_status: 'completed',
-        completed_at: new Date().toISOString()
-      })
-      .select()
-      .single();
+app.post('/api/auth/guest', (_req, res) => {
+  try {
+    const user = createGuestUser();
+    res.json({ token: user.id, user });
+  } catch (error) {
+    console.error('auth/guest error', error);
+    res.status(500).json({ error: 'Failed to create guest', details: error.message });
+  }
+});
 
-    if (sessionError) throw sessionError;
+app.post('/api/matchmaking/join', (req, res) => {
+  try {
+    const { userId, username, serverId = 'global' } = req.body ?? {};
+    if (!userId || !username) {
+      return res.status(400).json({ error: 'userId and username are required' });
+    }
+    const result = joinMatchmaking({ userId, username, serverId });
+    res.json(result);
+  } catch (error) {
+    console.error('matchmaking/join error', error);
+    res.status(500).json({ error: 'Failed to join queue', details: error.message });
+  }
+});
 
-    // Update player_stats
-    const { data: stats, error: statsSelectError } = await supabase
-      .from('player_stats')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle();
+app.post('/api/matchmaking/leave', (req, res) => {
+  try {
+    const { userId } = req.body ?? {};
+    if (!userId) {
+      return res.status(400).json({ error: 'userId required' });
+    }
+    const result = leaveMatchmaking({ userId });
+    res.json(result);
+  } catch (error) {
+    console.error('matchmaking/leave error', error);
+    res.status(500).json({ error: 'Failed to leave queue', details: error.message });
+  }
+});
 
-    if (statsSelectError) throw statsSelectError;
+app.get('/api/matchmaking/snapshot', (_req, res) => {
+  res.json(getMatchmakingSnapshot());
+});
 
-    if (stats) {
-      const newTotalGames = stats.total_matches + 1;
-      const newTotalScore = stats.total_score + score;
-      const newBestScore = Math.max(stats.best_score, score);
+app.post('/api/lobby/create', (req, res) => {
+  try {
+    const { hostId, username, serverId = 'global' } = req.body ?? {};
+    if (!hostId || !username) {
+      return res.status(400).json({ error: 'hostId and username are required' });
+    }
+    const lobby = createLobby({ hostId, hostUsername: username, serverId });
+    res.json({ lobby });
+  } catch (error) {
+    console.error('lobby/create error', error);
+    res.status(500).json({ error: 'Failed to create lobby', details: error.message });
+  }
+});
 
-      const { error: statsUpdateError } = await supabase
-        .from('player_stats')
-        .update({
-          total_matches: newTotalGames,
-          total_score: newTotalScore,
-          total_words: stats.total_words + wordsFound,
-          best_score: newBestScore,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId);
-
-      if (statsUpdateError) {
-        console.error('Failed to update player_stats:', statsUpdateError);
-      }
+app.post('/api/lobby/join', (req, res) => {
+  try {
+    const { code, lobbyId, userId, username } = req.body ?? {};
+    if (!userId || !username) {
+      return res.status(400).json({ error: 'userId and username are required' });
+    }
+    let lobby = null;
+    if (code) {
+      lobby = joinLobbyByCode({ code: code.toString(), userId, username });
+    } else if (lobbyId) {
+      lobby = joinLobby({ lobbyId, userId, username });
     } else {
-      // Create stats if they don't exist
-      const { error: statsInsertError } = await supabase
-        .from('player_stats')
-        .insert({
-          user_id: userId,
-          total_matches: 1,
-          total_wins: 0,
-          total_score: score,
-          total_words: wordsFound,
-          best_score: score,
-          win_streak: 0,
-          best_win_streak: 0
-        });
-
-      if (statsInsertError) {
-        console.error('Failed to create player_stats:', statsInsertError);
-      }
+      return res.status(400).json({ error: 'code or lobbyId required' });
     }
-
-    res.json(session);
+    res.json({ lobby });
   } catch (error) {
-    console.error('Create session error:', error);
+    console.error('lobby/join error', error);
+    res.status(500).json({ error: 'Failed to join lobby', details: error.message });
+  }
+});
+
+app.get('/api/lobby/:lobbyId', (req, res) => {
+  const lobby = getLobbyById(req.params.lobbyId);
+  if (!lobby) {
+    return res.status(404).json({ error: 'Lobby not found' });
+  }
+  res.json(lobby);
+});
+
+app.post('/api/lobby/ready', (req, res) => {
+  try {
+    const { lobbyId, userId, ready } = req.body ?? {};
+    if (!lobbyId || !userId || typeof ready !== 'boolean') {
+      return res.status(400).json({ error: 'lobbyId, userId and ready are required' });
+    }
+    const lobby = setPlayerReady({ lobbyId, userId, ready });
+    res.json({ lobby });
+  } catch (error) {
+    console.error('lobby/ready error', error);
+    res.status(500).json({ error: 'Failed to update ready status', details: error.message });
+  }
+});
+
+app.post('/api/lobby/leave', (req, res) => {
+  try {
+    const { lobbyId, userId } = req.body ?? {};
+    if (!lobbyId || !userId) {
+      return res.status(400).json({ error: 'lobbyId and userId required' });
+    }
+    const lobby = leaveLobby({ lobbyId, userId });
+    res.json({ lobby });
+  } catch (error) {
+    console.error('lobby/leave error', error);
+    res.status(500).json({ error: 'Failed to leave lobby', details: error.message });
+  }
+});
+
+app.post('/api/lobby/start', (req, res) => {
+  try {
+    const { lobbyId } = req.body ?? {};
+    if (!lobbyId) {
+      return res.status(400).json({ error: 'lobbyId required' });
+    }
+    const result = startLobby({ lobbyId });
+    res.json(result);
+  } catch (error) {
+    console.error('lobby/start error', error);
+    res.status(500).json({ error: 'Failed to start lobby', details: error.message });
+  }
+});
+
+app.post('/api/game/sessions', (req, res) => {
+  try {
+    const { userId, playerName, serverId = 'global', channelId } = req.body ?? {};
+    if (!userId || !playerName) {
+      return res.status(400).json({ error: 'userId and playerName required' });
+    }
+    const session = createSession({ userId, playerName, serverId, channelId });
+    res.json({ session });
+  } catch (error) {
+    console.error('game/sessions error', error);
     res.status(500).json({ error: 'Failed to create session', details: error.message });
   }
 });
 
-app.get('/api/game/leaderboard', async (req, res) => {
+app.post('/api/game/sessions/:sessionId/complete', (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('player_stats')
-      .select(`
-        *,
-        users (
-          username,
-          avatar_url,
-          coins,
-          gems
-        )
-      `)
-      .order('best_score', { ascending: false })
-      .limit(100);
-
-    if (error) throw error;
-
-    // Format response to match expected structure
-    const formattedData = data.map(stat => ({
-      username: stat.users.username,
-      avatar_url: stat.users.avatar_url,
-      coins: stat.users.coins,
-      gems: stat.users.gems,
-      user_id: stat.user_id,
-      total_matches: stat.total_matches,
-      total_wins: stat.total_wins,
-      total_score: stat.total_score,
-      total_words: stat.total_words,
-      best_score: stat.best_score,
-      win_streak: stat.win_streak,
-      best_win_streak: stat.best_win_streak,
-      updated_at: stat.updated_at
-    }));
-
-    res.json(formattedData);
+    const { sessionId } = req.params;
+    const { score } = req.body ?? {};
+    const session = completeSession(sessionId, { score });
+    res.json({ session });
   } catch (error) {
-    console.error('Leaderboard error:', error);
-    res.status(500).json({ error: 'Failed to fetch leaderboard', details: error.message });
+    console.error('game/sessions complete error', error);
+    res.status(500).json({ error: 'Failed to complete session', details: error.message });
   }
 });
 
-app.get('/api/game/server-records', async (req, res) => {
+app.post('/api/game/matches', (req, res) => {
   try {
-    const { serverId } = req.query;
-
-    const { data, error } = await supabase
-      .from('server_records')
-      .select('*')
-      .eq('server_id', serverId)
-      .maybeSingle();
-
-    if (error) throw error;
-
-    res.json(data || null);
-  } catch (error) {
-    console.error('Server record error:', error);
-    res.status(500).json({ error: 'Failed to fetch server record', details: error.message });
-  }
-});
-
-app.post('/api/game/server-records', async (req, res) => {
-  try {
-    const { serverId, userId, username, score, wordsFound, gemsCollected } = req.body;
-
-    // Check if a record exists for this server
-    const { data: existingRecord, error: selectError } = await supabase
-      .from('server_records')
-      .select('*')
-      .eq('server_id', serverId)
-      .maybeSingle();
-
-    if (selectError) throw selectError;
-
-    let result;
-
-    if (!existingRecord) {
-      // No existing record, insert new one
-      const { data, error } = await supabase
-        .from('server_records')
-        .insert({
-          server_id: serverId,
-          user_id: userId,
-          username: username,
-          score: score,
-          words_found: wordsFound,
-          gems_collected: gemsCollected,
-          achieved_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      result = data;
-    } else if (existingRecord.score < score) {
-      // Existing record has lower score, update it
-      const { data, error } = await supabase
-        .from('server_records')
-        .update({
-          user_id: userId,
-          username: username,
-          score: score,
-          words_found: wordsFound,
-          gems_collected: gemsCollected,
-          achieved_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-        .eq('server_id', serverId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      result = data;
-    } else {
-      // Existing record has higher or equal score, don't update
-      result = existingRecord;
+    const { matchId, players, gridData, wordsFound, lobbyId } = req.body ?? {};
+    if (!players || !Array.isArray(players)) {
+      return res.status(400).json({ error: 'players array required' });
     }
-
-    res.json(result);
+    const match = recordMatchResults({
+      matchId: matchId ?? randomUUID(),
+      players,
+      gridData,
+      wordsFound: wordsFound ?? [],
+      lobbyId,
+    });
+    res.json({ match });
   } catch (error) {
-    console.error('Update server record error:', error);
+    console.error('game/matches error', error);
+    res.status(500).json({ error: 'Failed to record match', details: error.message });
+  }
+});
+
+app.get('/api/sessions/active', (req, res) => {
+  const { serverId = 'global' } = req.query;
+  const sessions = getActiveSessions(serverId);
+  res.json(sessions);
+});
+
+app.get('/api/leaderboard', (req, res) => {
+  const limit = Number(req.query.limit) || 10;
+  res.json(getLeaderboard(limit));
+});
+
+app.get('/api/stats/:userId', (req, res) => {
+  const stats = getPlayerStats(req.params.userId);
+  if (!stats) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  res.json(stats);
+});
+
+app.get('/api/matches/:userId', (req, res) => {
+  const limit = Number(req.query.limit) || 20;
+  res.json(getMatchHistory(req.params.userId, limit));
+});
+
+app.get('/api/server-records', (req, res) => {
+  const { serverId = 'global' } = req.query;
+  res.json(getServerRecord(serverId) ?? null);
+});
+
+app.post('/api/server-records', (req, res) => {
+  try {
+    const { serverId = 'global', userId, username, score, wordsFound, gemsCollected } = req.body ?? {};
+    if (!userId || !username || typeof score !== 'number') {
+      return res.status(400).json({ error: 'userId, username and score are required' });
+    }
+    const record = updateServerRecord({
+      serverId,
+      userId,
+      username,
+      score,
+      wordsFound: wordsFound ?? 0,
+      gemsCollected: gemsCollected ?? 0,
+    });
+    res.json(record);
+  } catch (error) {
+    console.error('server-records update error', error);
     res.status(500).json({ error: 'Failed to update server record', details: error.message });
   }
 });
 
-app.get('/api/game/sessions', async (req, res) => {
-  try {
-    const { userId } = req.query;
-
-    const { data, error } = await supabase
-      .from('game_sessions')
-      .select('*')
-      .eq('user_id', userId)
-      .order('completed_at', { ascending: false })
-      .limit(10);
-
-    if (error) throw error;
-
-    res.json(data || []);
-  } catch (error) {
-    console.error('Get sessions error:', error);
-    res.status(500).json({ error: 'Failed to fetch sessions', details: error.message });
-  }
+app.post('/api/logs', (req, res) => {
+  const payload = req.body ?? {};
+  console.warn('[ClientLog]', payload);
+  res.json({ ok: true });
 });
 
-const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
+const PORT = Number(process.env.PORT || 3001);
+httpServer.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`WebSocket listening on ws://localhost:${PORT}/ws`);
 });

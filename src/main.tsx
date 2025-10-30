@@ -9,51 +9,6 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { errorLogger } from './utils/errorLogger';
 import { ErrorType, ErrorSeverity } from './types/errors';
 
-// Polyfill for Discord's broken event.once
-if (typeof EventTarget !== 'undefined' && EventTarget.prototype) {
-  const originalAddEventListener = EventTarget.prototype.addEventListener;
-  if (!('once' in Object.getOwnPropertyDescriptor(EventTarget.prototype, 'addEventListener')?.value || {})) {
-    console.log('[Polyfill] Adding event.once support');
-  }
-}
-
-// Add once method to any event emitter that doesn't have it
-(window as any).EventEmitter = class EventEmitter {
-  private listeners: Map<string, Function[]> = new Map();
-
-  on(event: string, callback: Function) {
-    if (!this.listeners.has(event)) {
-      this.listeners.set(event, []);
-    }
-    this.listeners.get(event)!.push(callback);
-  }
-
-  once(event: string, callback: Function) {
-    const wrapper = (...args: any[]) => {
-      this.off(event, wrapper);
-      callback(...args);
-    };
-    this.on(event, wrapper);
-  }
-
-  off(event: string, callback: Function) {
-    const listeners = this.listeners.get(event);
-    if (listeners) {
-      const index = listeners.indexOf(callback);
-      if (index > -1) {
-        listeners.splice(index, 1);
-      }
-    }
-  }
-
-  emit(event: string, ...args: any[]) {
-    const listeners = this.listeners.get(event);
-    if (listeners) {
-      listeners.forEach(callback => callback(...args));
-    }
-  }
-};
-
 // Debug utilities
 export const DEBUG = true;
 function debug(...args: unknown[]) {
@@ -65,8 +20,8 @@ function debug(...args: unknown[]) {
 // Analytics helper
 function trackEvent(eventName: string, data?: Record<string, unknown>) {
   console.log('[WordHex Event]', eventName, data);
-  if (typeof window !== 'undefined' && (window as any).va) {
-    (window as any).va('event', eventName, data);
+  if (typeof window !== 'undefined') {
+    window.va?.('event', eventName, data);
   }
 }
 
@@ -85,6 +40,74 @@ async function waitForDOMLoaded() {
   return new Promise<void>(resolve => {
     window.addEventListener('load', () => resolve(), { once: true });
   });
+}
+
+type DiscordIdentity = {
+  id: string;
+  username: string;
+  discriminator?: string;
+  global_name?: string | null;
+};
+
+declare global {
+  interface Window {
+    __WORDHEX_DISCORD_USER__?: DiscordIdentity;
+    va?: (type: 'event', eventName: string, data?: Record<string, unknown>) => void;
+  }
+}
+
+async function resolveDiscordIdentity(discord: DiscordSDK | null, frameId: string | null) {
+  let identity: DiscordIdentity | null = null;
+
+  if (discord?.commands?.getUser) {
+    try {
+      const me = await discord.commands.getUser({ id: '@me' });
+      if (me) {
+        identity = {
+          id: me.id,
+          username: me.global_name ?? me.username,
+          discriminator: me.discriminator,
+          global_name: me.global_name ?? null,
+        };
+        debug('Resolved Discord user via getUser', identity);
+      }
+    } catch (error) {
+      debug('Failed to resolve Discord user with getUser', error);
+    }
+  }
+
+  if (!identity && discord?.instanceId) {
+    identity = {
+      id: discord.instanceId,
+      username: `Player-${discord.instanceId.slice(-4)}`,
+      discriminator: '0000',
+      global_name: null,
+    };
+    debug('Fallback to Discord instanceId for identity', identity);
+  }
+
+  if (!identity && frameId) {
+    identity = {
+      id: frameId,
+      username: `Player-${frameId.slice(-4)}`,
+      discriminator: '0000',
+      global_name: null,
+    };
+    debug('Fallback to frameId for identity', identity);
+  }
+
+  if (!identity) {
+    identity = {
+      id: `guest-${Date.now().toString(36)}`,
+      username: `Guest-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+      discriminator: '0000',
+      global_name: null,
+    };
+    debug('Generated guest identity', identity);
+  }
+
+  window.__WORDHEX_DISCORD_USER__ = identity;
+  return identity;
 }
 
 async function initializeDiscordSDK(clientId: string) {
@@ -121,7 +144,7 @@ async function initializeApp() {
     throw new Error('Root element #root not found in DOM');
   }
 
-  let discord = null;
+  let discord: DiscordSDK | null = null;
   
   // Check if we should initialize Discord
   const frameId = getQueryParam('frame_id');
@@ -137,17 +160,18 @@ async function initializeApp() {
 
   if (frameId && clientId) {
     // Initialize Discord with timeout to prevent hanging
-    const discordInitTimeout = new Promise((_, reject) =>
+    const discordInitTimeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('Discord SDK timeout after 10s')), 10000)
     );
 
     try {
       trackEvent('discord_sdk_init_start');
 
-      discord = await Promise.race([
+      const discordSdk = await Promise.race<DiscordSDK>([
         initializeDiscordSDK(clientId),
         discordInitTimeout
-      ]) as any;
+      ]);
+      discord = discordSdk;
 
       debug('Discord SDK initialized successfully');
       trackEvent('discord_sdk_init_success');
@@ -187,6 +211,8 @@ async function initializeApp() {
     debug('Missing:', !frameId ? 'frame_id' : '', !clientId ? 'client_id' : '');
     trackEvent('standalone_mode', { reason: !frameId ? 'no_frame_id' : 'no_client_id' });
   }
+
+  await resolveDiscordIdentity(discord, frameId);
 
   window.onerror = (message, source, lineno, colno, error) => {
     errorLogger.logError(

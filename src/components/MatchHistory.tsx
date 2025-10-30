@@ -1,8 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { History, ArrowLeft, RefreshCw, Users, Clock, Trophy } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../services/api';
+import { useError } from '../contexts/ErrorContext';
+import { ErrorSeverity, ErrorType } from '../types/errors';
 import { DataTable, Column } from './DataTable';
+import type { MatchHistoryEntry } from '../types/api';
 
 interface MatchHistoryProps {
   onBack: () => void;
@@ -20,6 +23,7 @@ interface MatchRecord {
 
 export function MatchHistory({ onBack }: MatchHistoryProps) {
   const { user } = useAuth();
+  const { logError } = useError();
   const [matches, setMatches] = useState<MatchRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,67 +35,35 @@ export function MatchHistory({ onBack }: MatchHistoryProps) {
       setLoading(true);
       setError(null);
 
-      const { data: matchPlayers, error: matchError } = await supabase
-        .from('match_players')
-        .select(`
-          id,
-          match_id,
-          score,
-          words_found,
-          rank,
-          joined_at,
-          matches (
-            id,
-            status,
-            ended_at
-          )
-        `)
-        .eq('user_id', user.id)
-        .order('joined_at', { ascending: false })
-        .limit(50);
+      const response = await api.stats.matches(user.id, 50);
+      const records: MatchRecord[] = response.map((match: MatchHistoryEntry) => {
+        const players = match.players ?? [];
+        const me = players.find((player) => player.userId === user.id);
+        const completedAt = match.completedAt ?? match.updatedAt ?? match.createdAt;
+        return {
+          matchId:
+            match.id ??
+            match.matchId ??
+            `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+          date: new Date(completedAt ?? Date.now()).toLocaleString(),
+          score: me?.score ?? 0,
+          wordsFound: Array.isArray(match.wordsFound)
+            ? match.wordsFound.length
+            : me?.wordsFound.length ?? 0,
+          rank: me?.rank ?? 0,
+          totalPlayers: players.length || 1,
+          status: match.status ?? 'completed',
+        };
+      });
 
-      if (matchError) throw matchError;
-
-      if (matchPlayers) {
-        const matchIds = matchPlayers.map(mp => mp.match_id);
-
-        const { data: allMatchPlayers, error: playersError } = await supabase
-          .from('match_players')
-          .select('match_id')
-          .in('match_id', matchIds);
-
-        if (playersError) throw playersError;
-
-        const playerCountMap = new Map<string, number>();
-        allMatchPlayers?.forEach(mp => {
-          playerCountMap.set(mp.match_id, (playerCountMap.get(mp.match_id) || 0) + 1);
-        });
-
-        const records: MatchRecord[] = matchPlayers.map(mp => ({
-          matchId: mp.match_id,
-          date: new Date(mp.joined_at).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          }),
-          score: mp.score,
-          wordsFound: Array.isArray(mp.words_found) ? mp.words_found.length : 0,
-          rank: mp.rank || 0,
-          totalPlayers: playerCountMap.get(mp.match_id) || 1,
-          status: mp.matches?.status || 'unknown'
-        }));
-
-        setMatches(records);
-      }
+      setMatches(records);
     } catch (err) {
-      console.error('Error loading match history:', err);
+      logError(err, ErrorType.NETWORK, ErrorSeverity.MEDIUM, 'Failed to load match history');
       setError('Failed to load match history');
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, logError]);
 
   useEffect(() => {
     loadMatchHistory();

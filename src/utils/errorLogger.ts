@@ -1,5 +1,5 @@
 import { AppError, ErrorType, ErrorSeverity } from '../types/errors';
-import { supabase } from '../lib/supabase';
+import { api } from '../services/api';
 
 interface ErrorLog {
   error: AppError;
@@ -78,25 +78,21 @@ class ErrorLogger {
         user_message: log.error.userMessage,
         context: log.error.context || {},
         timestamp: new Date(log.error.timestamp).toISOString(),
-        retryable: log.error.retryable
+        retryable: log.error.retryable,
       }));
 
-      const { error } = await supabase
-        .from('error_logs')
-        .insert(errorLogs);
+      await api.logs.client({ errors: errorLogs });
 
-      if (!error) {
-        unsyncedErrors.forEach(log => {
-          log.synced = true;
-        });
-        this.saveQueue();
+      unsyncedErrors.forEach(log => {
+        log.synced = true;
+      });
+      this.saveQueue();
 
-        this.errorQueue = this.errorQueue.filter(log => {
-          const age = Date.now() - log.error.timestamp;
-          return age < 24 * 60 * 60 * 1000 || !log.synced;
-        });
-        this.saveQueue();
-      }
+      this.errorQueue = this.errorQueue.filter(log => {
+        const age = Date.now() - log.error.timestamp;
+        return age < 24 * 60 * 60 * 1000 || !log.synced;
+      });
+      this.saveQueue();
     } catch (error) {
       console.error('Failed to sync errors:', error);
     }

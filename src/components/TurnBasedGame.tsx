@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { GameGrid } from './GameGrid';
 import { WordDisplay } from './WordDisplay';
 import { WordsList } from './WordsList';
@@ -10,11 +10,11 @@ import { calculateScore } from '../utils/scoring';
 import { Send, Trash2, ArrowLeft, Settings } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { audioManager } from '../utils/audioManager';
-import { supabase } from '../lib/supabase';
 import { saveMatchResults } from '../utils/gameStats';
+import { api } from '../services/api';
+import type { MatchSummary, MatchPlayerSummary, LobbySummary } from '../types/api';
 
 const MAX_ROUNDS_PER_PLAYER = 4;
-const MAX_PLAYERS = 8;
 
 interface Player {
   id: string;
@@ -29,10 +29,19 @@ interface TurnBasedGameProps {
   serverId?: string;
   channelId?: string;
   isHost?: boolean;
+  match?: MatchSummary | null;
 }
 
-export function TurnBasedGame({ onBack, serverId = 'dev-server-123', isHost = true }: TurnBasedGameProps) {
+export function TurnBasedGame({
+  onBack,
+  serverId = 'dev-server-123',
+  channelId,
+  isHost: _isHost = true,
+  match = null,
+}: TurnBasedGameProps) {
   const { getUsername, user } = useAuth();
+  const playerName = getUsername();
+  const localUserId = user?.id || 'guest';
   const [gameState, setGameState] = useState<GameState>({
     grid: generateGrid(),
     selectedTiles: [],
@@ -44,11 +53,25 @@ export function TurnBasedGame({ onBack, serverId = 'dev-server-123', isHost = tr
     gameOver: false
   });
 
-  const [players, setPlayers] = useState<Player[]>([
-    { id: user?.id || '1', username: getUsername(), score: 0, roundsPlayed: 0 },
-    { id: '2', username: 'Player 2', score: 0, roundsPlayed: 0 },
-    { id: '3', username: 'Player 3', score: 0, roundsPlayed: 0 },
-  ]);
+  const [players, setPlayers] = useState<Player[]>(() => {
+    if (match?.players?.length) {
+      return match.players.map((player) => ({
+        id: player.userId,
+        username: player.username,
+        score: player.score ?? 0,
+        roundsPlayed: 0,
+      }));
+    }
+
+    return [
+      {
+        id: localUserId,
+        username: playerName,
+        score: 0,
+        roundsPlayed: 0,
+      },
+    ];
+  });
 
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [showValidation, setShowValidation] = useState(false);
@@ -58,56 +81,128 @@ export function TurnBasedGame({ onBack, serverId = 'dev-server-123', isHost = tr
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   const currentPlayer = players[currentPlayerIndex];
-  const isMyTurn = currentPlayer.id === (user?.id || '1');
+  const matchPlayers: MatchPlayerSummary[] = useMemo(() => match?.players ?? [], [match?.players]);
+  const lobbyId = match?.lobbyId ?? null;
+
+  useEffect(() => {
+    if (!matchPlayers.length) {
+      return;
+    }
+    setPlayers((prev) =>
+      matchPlayers.map((player) => {
+        const existing = prev.find((p) => p.id === player.userId);
+        return {
+          id: player.userId,
+          username: player.username,
+          score: existing?.score ?? player.score ?? 0,
+          roundsPlayed: existing?.roundsPlayed ?? 0,
+        };
+      })
+    );
+  }, [matchPlayers]);
+
+  useEffect(() => {
+    if (matchPlayers.length || !lobbyId) {
+      return;
+    }
+    let cancelled = false;
+
+    const loadLobbyPlayers = async () => {
+      try {
+        const response = await api.lobby.get(lobbyId);
+        const lobbyPlayers = response?.players ?? [];
+        if (!cancelled && lobbyPlayers.length) {
+          setPlayers((prev) =>
+            lobbyPlayers.map((player: LobbySummary['players'][number]) => {
+              const existing = prev.find((p) => p.id === player.userId);
+              return {
+                id: player.userId,
+                username: player.username,
+                score: existing?.score ?? 0,
+                roundsPlayed: existing?.roundsPlayed ?? 0,
+              };
+            })
+          );
+        }
+      } catch (error) {
+        console.error('Failed to load lobby players:', error);
+      }
+    };
+
+    loadLobbyPlayers();
+    return () => {
+      cancelled = true;
+    };
+  }, [matchPlayers, lobbyId]);
+
+  useEffect(() => {
+    if (matchPlayers.length) {
+      return;
+    }
+    setPlayers((prev) => {
+      if (prev.length === 1 && prev[0].id === localUserId) {
+        if (prev[0].username === playerName) {
+          return prev;
+        }
+        return [
+          {
+            ...prev[0],
+            username: playerName,
+          },
+        ];
+      }
+      return [
+        {
+          id: localUserId,
+          username: playerName,
+          score: 0,
+          roundsPlayed: 0,
+        },
+      ];
+    });
+  }, [matchPlayers, localUserId, playerName]);
+
+  const isMyTurn = currentPlayer.id === localUserId;
 
   // Create game session on mount
   useEffect(() => {
+    let cancelled = false;
     const createSession = async () => {
       try {
-        const { data, error } = await supabase
-          .from('game_sessions')
-          .insert({
-            user_id: user?.id || '1',
-            player_name: getUsername(),
-            server_id: serverId,
-            channel_id: 'general',
-            game_status: 'active',
-            score: 0,
-            round_number: 1,
-            time_remaining: 0,
-            player_avatar_url: user?.user_metadata?.avatar_url
-          })
-          .select()
-          .single();
-
-        if (error) throw error;
-        if (data) setSessionId(data.id);
+        const response = await api.game.createSession({
+          userId: localUserId,
+          playerName,
+          serverId,
+          channelId,
+        });
+        if (!cancelled) {
+          setSessionId(response?.session?.id ?? null);
+        }
       } catch (error) {
         console.error('Failed to create session:', error);
       }
     };
 
     createSession();
-  }, [user?.id, serverId, getUsername, user?.user_metadata?.avatar_url]);
+    return () => {
+      cancelled = true;
+    };
+  }, [localUserId, serverId, channelId, playerName]);
 
   // Update session status when game ends and save match results
   useEffect(() => {
-    if (gameState.gameOver && sessionId) {
+    if (gameState.gameOver) {
       const finalizeGame = async () => {
         try {
-          await supabase
-            .from('game_sessions')
-            .update({
-              game_status: 'completed',
-              score: gameState.score
-            })
-            .eq('id', sessionId);
-
+          if (sessionId) {
+            await api.game.completeSession(sessionId, { score: gameState.score });
+          }
           await saveMatchResults({
-            players: players.map(p => ({ id: p.id, username: p.username, score: p.score })),
+            matchId: match?.id,
+            lobbyId: match?.lobbyId ?? null,
+            players: players.map((p) => ({ id: p.id, username: p.username, score: p.score })),
             gridData: gameState.grid,
             wordsFound: gameState.wordsFound,
-            lobbyId: serverId
           });
         } catch (error) {
           console.error('Failed to finalize game:', error);
@@ -116,20 +211,17 @@ export function TurnBasedGame({ onBack, serverId = 'dev-server-123', isHost = tr
 
       finalizeGame();
     }
-  }, [gameState.gameOver, sessionId, gameState.score, players, gameState.grid, gameState.wordsFound, serverId]);
+  }, [gameState.gameOver, sessionId, gameState.score, players, gameState.grid, gameState.wordsFound, match, serverId]);
 
-  // Cleanup session on unmount
   useEffect(() => {
     return () => {
       if (sessionId) {
-        supabase
-          .from('game_sessions')
-          .update({ game_status: 'completed' })
-          .eq('id', sessionId)
-          .then(() => {});
+        api.game
+          .completeSession(sessionId, { score: gameState.score })
+          .catch((error) => console.error('Failed to cleanup session:', error));
       }
     };
-  }, [sessionId]);
+  }, [sessionId, gameState.score]);
 
   const handleTileSelect = useCallback((tile: Tile) => {
     if (!isMyTurn || gameState.gameOver) return;
@@ -238,21 +330,36 @@ export function TurnBasedGame({ onBack, serverId = 'dev-server-123', isHost = tr
         nextTurn();
       }, 1000);
     }
-  }, [gameState.selectedTiles, gameState.grid, gameState.score, gameState.wordsFound, gameState.gemsCollected, isMyTurn, currentPlayerIndex]);
+  }, [
+    gameState.selectedTiles,
+    gameState.grid,
+    gameState.score,
+    gameState.wordsFound,
+    gameState.gemsCollected,
+    isMyTurn,
+    currentPlayerIndex,
+    nextTurn,
+  ]);
 
-  const nextTurn = () => {
-    setPlayers(prev => prev.map((p, idx) =>
-      idx === currentPlayerIndex ? { ...p, roundsPlayed: p.roundsPlayed + 1 } : p
-    ));
+  const nextTurn = useCallback(() => {
+    setPlayers((prevPlayers) => {
+      const updatedPlayers = prevPlayers.map((p, idx) =>
+        idx === currentPlayerIndex ? { ...p, roundsPlayed: p.roundsPlayed + 1 } : p
+      );
 
-    const nextIndex = (currentPlayerIndex + 1) % players.length;
-    setCurrentPlayerIndex(nextIndex);
+      const nextIndex = (currentPlayerIndex + 1) % updatedPlayers.length;
+      setCurrentPlayerIndex(nextIndex);
 
-    const allPlayersFinished = players.every(p => p.roundsPlayed >= MAX_ROUNDS_PER_PLAYER);
-    if (allPlayersFinished) {
-      setGameState(prev => ({ ...prev, gameOver: true }));
-    }
-  };
+      const allPlayersFinished = updatedPlayers.every(
+        (player) => player.roundsPlayed >= MAX_ROUNDS_PER_PLAYER
+      );
+      if (allPlayersFinished) {
+        setGameState((prevState) => ({ ...prevState, gameOver: true }));
+      }
+
+      return updatedPlayers;
+    });
+  }, [currentPlayerIndex]);
 
   const handleClearSelection = useCallback(() => {
     if (!isMyTurn) return;

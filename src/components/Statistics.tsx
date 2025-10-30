@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Trophy, Target, Zap, TrendingUp, ArrowLeft, Flame, Award, Percent } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../services/api';
+import { useError } from '../contexts/ErrorContext';
+import { ErrorSeverity, ErrorType } from '../types/errors';
 
 interface StatisticsProps {
   onBack: () => void;
@@ -21,6 +23,7 @@ interface PlayerStats {
 
 export function Statistics({ onBack }: StatisticsProps) {
   const { user } = useAuth();
+  const { logError } = useError();
   const [stats, setStats] = useState<PlayerStats>({
     totalGames: 0,
     highScore: 0,
@@ -30,55 +33,44 @@ export function Statistics({ onBack }: StatisticsProps) {
     totalWins: 0,
     winStreak: 0,
     bestWinStreak: 0,
-    winRate: 0
+    winRate: 0,
   });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadStats = async () => {
       if (!user) return;
-
+      setLoading(true);
       try {
-        setLoading(true);
+        const response = await api.stats.player(user.id);
+        const totalMatches = response.totalMatches;
+        const totalWins = response.totalWins;
+        const totalScore = response.totalScore;
+        const totalWords = response.totalWords;
+        const bestScore = response.bestScore;
+        const winStreak = response.winStreak;
+        const bestWinStreak = response.bestWinStreak;
+        const winRate = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
 
-        const { data: playerStats, error: statsError } = await supabase
-          .from('player_stats')
-          .select('*')
-          .eq('user_id', user.id)
-          .maybeSingle();
-
-        if (statsError) {
-          console.error('Error loading stats:', statsError);
-        }
-
-        if (playerStats) {
-          const winRate = playerStats.total_matches > 0
-            ? (playerStats.total_wins / playerStats.total_matches) * 100
-            : 0;
-
-          setStats({
-            totalGames: playerStats.total_matches,
-            highScore: playerStats.best_score,
-            totalWords: playerStats.total_words,
-            totalGems: user.gems,
-            averageScore: playerStats.total_matches > 0
-              ? Math.round(playerStats.total_score / playerStats.total_matches)
-              : 0,
-            totalWins: playerStats.total_wins,
-            winStreak: playerStats.win_streak,
-            bestWinStreak: playerStats.best_win_streak,
-            winRate
-          });
-        }
+        setStats({
+          totalGames: totalMatches,
+          highScore: bestScore,
+          totalWords,
+          totalGems: response.gems,
+          averageScore: totalMatches > 0 ? Math.round(totalScore / totalMatches) : 0,
+          totalWins,
+          winStreak,
+          bestWinStreak,
+          winRate,
+        });
       } catch (error) {
-        console.error('Error loading statistics:', error);
+        logError(error, ErrorType.NETWORK, ErrorSeverity.MEDIUM, 'Failed to load statistics');
       } finally {
         setLoading(false);
       }
     };
-
     loadStats();
-  }, [user]);
+  }, [user, logError]);
 
   const statCards = [
     {

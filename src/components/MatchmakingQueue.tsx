@@ -1,145 +1,130 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Loader2, X, Users } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { api, realtime } from '../services/api';
+import { useError } from '../contexts/ErrorContext';
+import { ErrorSeverity, ErrorType } from '../types/errors';
+import type { MatchmakingSnapshot, RealtimeMessage, LobbySummary } from '../types/api';
 
 interface MatchmakingQueueProps {
-  playerName: string;
-  onMatchFound: (lobbyId: string, lobbyCode: string) => void;
+  onMatchFound: (lobby: LobbySummary) => void;
   onCancel: () => void;
   serverId?: string;
 }
 
-export function MatchmakingQueue({ onCancel, onMatchFound, serverId }: MatchmakingQueueProps) {
+export function MatchmakingQueue({ onCancel, onMatchFound, serverId = 'global' }: MatchmakingQueueProps) {
   const { user, getUsername } = useAuth();
+  const { logError } = useError();
   const [timeInQueue, setTimeInQueue] = useState(0);
-  const [queuePosition, setQueuePosition] = useState(0);
+  const [queuePosition, setQueuePosition] = useState(1);
   const [playersInQueue, setPlayersInQueue] = useState(1);
+  const [joining, setJoining] = useState(true);
+
+  const playerId = user?.id || '';
+  const username = useMemo(() => getUsername(), [getUsername]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const joinQueue = async () => {
+      try {
+        const result = await api.matchmaking.join({
+          userId: playerId,
+          username,
+          serverId,
+        });
+
+        if (cancelled) return;
+
+        if (result.status === 'matched' && result.lobby) {
+          onMatchFound(result.lobby);
+        } else {
+          setQueuePosition(result.queuePosition || 1);
+          setPlayersInQueue(result.playersInQueue || 1);
+        }
+      } catch (error) {
+        logError(error, ErrorType.NETWORK, ErrorSeverity.HIGH, 'Failed to join matchmaking queue');
+        onCancel();
+      } finally {
+        setJoining(false);
+      }
+    };
+
     joinQueue();
 
-    const interval = setInterval(() => {
-      setTimeInQueue(t => t + 1);
-    }, 1000);
-
-    // Subscribe to matchmaking queue updates
-    const channel = supabase
-      .channel('matchmaking-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'matchmaking_queue',
-          filter: serverId ? `server_id=eq.${serverId}` : undefined
-        },
-        () => {
-          checkForMatch();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'lobbies'
-        },
-        async (payload) => {
-          // Check if this lobby was created for us
-          const { data: players } = await supabase
-            .from('lobby_players')
-            .select('lobby_id, user_id')
-            .eq('lobby_id', payload.new.id)
-            .eq('user_id', user?.id || '');
-
-          if (players && players.length > 0) {
-            const { data: lobby } = await supabase
-              .from('lobbies')
-              .select('id, lobby_code')
-              .eq('id', payload.new.id)
-              .single();
-
-            if (lobby) {
-              onMatchFound(lobby.id, lobby.lobby_code);
-            }
-          }
-        }
-      )
-      .subscribe();
-
     return () => {
-      clearInterval(interval);
-      supabase.removeChannel(channel);
-      leaveQueue();
+      cancelled = true;
     };
+  }, [playerId, username, serverId, onMatchFound, onCancel, logError]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimeInQueue((time) => time + 1);
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
-  const joinQueue = async () => {
-    try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-      const response = await fetch(`${API_URL}/matchmaking/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user?.id || '',
-          username: getUsername(),
-          avatarUrl: user?.user_metadata?.avatar_url,
-          serverId: serverId
-        })
-      });
-
-      const data = await response.json();
-
-      if (data.status === 'matched') {
-        onMatchFound(data.lobby.id, data.lobby.lobby_code);
-      } else {
-        setQueuePosition(data.queuePosition || 1);
-        setPlayersInQueue(data.playersInQueue || 1);
+  useEffect(() => {
+    const handleMatchmakingUpdate = (payload: RealtimeMessage) => {
+      if (payload.type !== 'matchmaking:update') {
+        return;
       }
-    } catch (error) {
-      console.error('Failed to join matchmaking:', error);
-    }
-  };
+      const snapshot = payload.snapshot as MatchmakingSnapshot | undefined;
+      if (!snapshot) return;
 
-  const checkForMatch = async () => {
-    try {
-      const { data: queueData } = await supabase
-        .from('matchmaking_queue')
-        .select('user_id')
-        .eq('server_id', serverId || '')
-        .order('searching_since', { ascending: true});
-
-      if (queueData) {
-        setPlayersInQueue(queueData.length);
-        const myPosition = queueData.findIndex(q => q.user_id === (user?.id || ''));
-        if (myPosition >= 0) {
-          setQueuePosition(myPosition + 1);
-        }
+      if (Array.isArray(snapshot.entries)) {
+        const serverEntries = snapshot.entries.filter((entry) => entry.serverId === serverId);
+        setPlayersInQueue(serverEntries.length || snapshot.queueSize || 1);
+        const position =
+          serverEntries.findIndex((entry) => entry.userId === playerId) + 1 ||
+          serverEntries.length ||
+          1;
+        setQueuePosition(position);
+      } else if (typeof snapshot.queueSize === 'number') {
+        setPlayersInQueue(snapshot.queueSize || 1);
       }
-    } catch (error) {
-      console.error('Failed to check queue:', error);
-    }
-  };
+    };
 
-  const leaveQueue = async () => {
-    try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-      await fetch(`${API_URL}/matchmaking/leave`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user?.id || ''
-        })
+    realtime.subscribe('matchmaking:global', handleMatchmakingUpdate);
+    return () => realtime.unsubscribe('matchmaking:global', handleMatchmakingUpdate);
+  }, [playerId, serverId]);
+
+  useEffect(() => {
+    const handleLobbyMatch = (payload: RealtimeMessage) => {
+      if (payload.type !== 'lobby:update') {
+        return;
+      }
+      const lobby = payload.lobby as LobbySummary | undefined;
+      if (!lobby || lobby.status !== 'waiting') {
+        return;
+      }
+      if (lobby.players.some((player) => player.userId === playerId)) {
+        onMatchFound(lobby);
+      }
+    };
+
+    realtime.subscribe(`server:${serverId}:lobbies`, handleLobbyMatch);
+    return () => realtime.unsubscribe(`server:${serverId}:lobbies`, handleLobbyMatch);
+  }, [playerId, serverId, onMatchFound]);
+
+  useEffect(() => {
+    return () => {
+      api.matchmaking.leave({ userId: playerId }).catch((error) => {
+        logError(error, ErrorType.NETWORK, ErrorSeverity.LOW, 'Failed to leave matchmaking queue', {
+          userId: playerId,
+        });
       });
-    } catch (error) {
-      console.error('Failed to leave matchmaking:', error);
-    }
-  };
+    };
+  }, [playerId, logError]);
 
   const handleCancel = async () => {
-    await leaveQueue();
-    onCancel();
+    try {
+      await api.matchmaking.leave({ userId: playerId });
+    } catch (error) {
+      logError(error, ErrorType.NETWORK, ErrorSeverity.MEDIUM, 'Failed to leave matchmaking queue');
+    } finally {
+      onCancel();
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -173,7 +158,7 @@ export function MatchmakingQueue({ onCancel, onMatchFound, serverId }: Matchmaki
           </div>
 
           <p className="text-purple-300 text-sm mb-6">
-            Matching you with up to 7 other players...
+            {joining ? 'Contacting lobby server…' : 'Matching you with up to 7 other players…'}
           </p>
 
           <button
