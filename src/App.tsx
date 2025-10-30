@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { MainMenu } from './components/MainMenu';
 import { TurnBasedGame } from './components/TurnBasedGame';
 import { Statistics } from './components/Statistics';
@@ -120,6 +121,7 @@ function App() {
       {renderPage()}
       <ErrorNotification error={currentError} onDismiss={clearError} />
       <OfflineBanner show={!networkStatus.online} />
+      <Analytics />
     </>
   );
 }

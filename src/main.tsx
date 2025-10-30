@@ -58,7 +58,15 @@ if (typeof EventTarget !== 'undefined' && EventTarget.prototype) {
 export const DEBUG = true;
 function debug(...args: unknown[]) {
   if (DEBUG) {
-    console.log('[Debug]', ...args);
+    console.log('[WordHex Debug]', new Date().toISOString(), ...args);
+  }
+}
+
+// Analytics helper
+function trackEvent(eventName: string, data?: Record<string, unknown>) {
+  console.log('[WordHex Event]', eventName, data);
+  if (typeof window !== 'undefined' && (window as any).va) {
+    (window as any).va('event', eventName, data);
   }
 }
 
@@ -136,13 +144,22 @@ async function initializeApp() {
   const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
 
   debug('Discord check:', { frameId: !!frameId, clientId: !!clientId, actualClientId: clientId });
+  trackEvent('app_init', {
+    hasFrameId: !!frameId,
+    hasClientId: !!clientId,
+    origin: window.location.origin,
+    href: window.location.href
+  });
 
   if (frameId && clientId) {
     try {
+      trackEvent('discord_sdk_init_start');
       discord = await initializeDiscordSDK(clientId);
       debug('Discord SDK initialized successfully');
+      trackEvent('discord_sdk_init_success');
 
       try {
+        trackEvent('discord_auth_start');
         await discord.commands.authorize({
           client_id: clientId,
           response_type: 'code',
@@ -151,11 +168,15 @@ async function initializeApp() {
           scope: ['identify', 'guilds']
         });
         debug('Discord authorization successful');
+        trackEvent('discord_auth_success');
       } catch (authError) {
         console.warn(
           'Discord authorization failed (continuing in limited mode):',
           authError instanceof Error ? authError.message : authError
         );
+        trackEvent('discord_auth_failed', {
+          error: authError instanceof Error ? authError.message : String(authError)
+        });
       }
     } catch (discordError) {
       // Log but don't throw - app should work without Discord
@@ -163,10 +184,14 @@ async function initializeApp() {
         'Discord integration disabled:',
         discordError instanceof Error ? discordError.message : discordError
       );
+      trackEvent('discord_sdk_init_failed', {
+        error: discordError instanceof Error ? discordError.message : String(discordError)
+      });
     }
   } else {
     debug('Running in standalone mode - Discord features will be limited');
     debug('Missing:', !frameId ? 'frame_id' : '', !clientId ? 'client_id' : '');
+    trackEvent('standalone_mode', { reason: !frameId ? 'no_frame_id' : 'no_client_id' });
   }
 
   window.onerror = (message, source, lineno, colno, error) => {
