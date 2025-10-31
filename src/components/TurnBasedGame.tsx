@@ -279,6 +279,15 @@ export function TurnBasedGame({
         return;
       }
 
+      console.log('[REALTIME] Received match update:', {
+        currentPlayerId: updated.currentPlayerId,
+        players: updated.players.map(p => ({
+          name: p.username,
+          score: p.score,
+          roundsPlayed: p.roundsPlayed
+        }))
+      });
+
       // Update players state from server
       setPlayers(
         updated.players.map((player) => ({
@@ -291,6 +300,7 @@ export function TurnBasedGame({
 
       // Update current player ID
       if (typeof updated.currentPlayerId !== 'undefined') {
+        console.log('[REALTIME] Setting currentPlayerId to:', updated.currentPlayerId);
         if (updated.currentPlayerId) {
           setCurrentPlayerId(updated.currentPlayerId);
         } else if (updated.players.length) {
@@ -413,6 +423,15 @@ export function TurnBasedGame({
         : (playerIndex + 1) % updatedPlayers.length;
       const nextPlayer = allPlayersFinished ? null : updatedPlayers[nextIndex];
 
+      console.log('[TURN] Switching turns:', {
+        currentPlayer: currentPlayer.username,
+        playerIndex,
+        nextIndex,
+        nextPlayer: nextPlayer?.username,
+        allPlayersFinished,
+        updatedPlayers: updatedPlayers.map(p => ({ name: p.username, roundsPlayed: p.roundsPlayed }))
+      });
+
       setPlayers(updatedPlayers);
       setCurrentPlayerId(nextPlayer ? nextPlayer.id : updatedPlayers[playerIndex].id);
 
@@ -459,8 +478,14 @@ export function TurnBasedGame({
             completedAt: new Date().toISOString(),
           } as MatchTurnSummary,
         };
+        console.log('[API] Sending match progress update:', {
+          matchId: match.id,
+          currentPlayerId: payload.currentPlayerId,
+          nextPlayerName: nextPlayer?.username
+        });
         try {
           await api.game.updateMatchProgress(match.id, payload);
+          console.log('[API] Match progress updated successfully');
         } catch (error) {
           console.error('Failed to update match progress:', error);
         }
