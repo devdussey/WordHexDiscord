@@ -125,7 +125,10 @@ function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers.Authorization = `Bearer ${authToken}`;
   }
 
-  return fetch(`${baseUrl}${path}`, {
+  const url = `${baseUrl}${path}`;
+  console.log(`[API] ${options.method || 'GET'} ${url}`, options.body ? JSON.parse(options.body as string) : '');
+
+  return fetch(url, {
     ...options,
     headers,
   }).then(async (response) => {
@@ -140,9 +143,11 @@ function request<T>(path: string, options: RequestInit = {}): Promise<T> {
           : (typeof body === 'object' && body !== null && 'error' in body
               ? String((body as Record<string, unknown>).error)
               : response.statusText);
+      console.error(`[API] ${options.method || 'GET'} ${url} failed:`, message);
       throw new Error(message);
     }
 
+    console.log(`[API] ${options.method || 'GET'} ${url} success:`, body);
     return body as T;
   });
 }

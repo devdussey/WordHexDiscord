@@ -613,6 +613,23 @@ export function TurnBasedGame({
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-fuchsia-950 p-8">
       <div className="max-w-7xl mx-auto">
+        {/* DEBUG PANEL */}
+        <div className="mb-4 bg-black/50 text-yellow-300 p-4 rounded-lg border border-yellow-500/50 font-mono text-xs">
+          <div className="font-bold mb-2">🔍 DEBUG INFO</div>
+          <div>Match ID: {match?.id || 'N/A'}</div>
+          <div>Current Player ID: {currentPlayerId}</div>
+          <div>Local User ID: {localUserId}</div>
+          <div>Is My Turn: {isMyTurn ? 'YES' : 'NO'}</div>
+          <div className="mt-2">Players:</div>
+          {players.map((p, i) => (
+            <div key={p.id} className="ml-4">
+              {i + 1}. {p.username} (ID: {p.id.slice(0, 8)}...) - Rounds: {p.roundsPlayed}/{MAX_ROUNDS_PER_PLAYER} - Score: {p.score}
+              {p.id === currentPlayerId && ' ← CURRENT'}
+              {p.id === localUserId && ' ← YOU'}
+            </div>
+          ))}
+        </div>
+
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={onBack}

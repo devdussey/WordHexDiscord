@@ -6,7 +6,9 @@
       "Bash(test:*)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$(cat <<''EOF''\nFix CORS for unrecognized origins with fallback header\n\nResolved issue where requests from origins not in the allowlist\nwould receive no Access-Control-Allow-Origin header, causing\nCORS errors. Now sets appropriate CORS headers for all origins\nwith console warnings for non-allowlisted sources.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(railway:*)"
     ],
     "deny": [],
     "ask": []
