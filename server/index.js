@@ -37,7 +37,40 @@ const app = express();
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
-app.use(cors());
+const defaultAllowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:4173',
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
+
+const configuredOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
+  : [];
+const allowedOrigins = [...defaultAllowedOrigins, ...configuredOrigins];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (
+        !origin ||
+        allowedOrigins.some((allowed) => {
+          if (allowed === origin) return true;
+          if (allowed.endsWith('*')) {
+            const base = allowed.slice(0, -1);
+            return origin.startsWith(base);
+          }
+          return false;
+        })
+      ) {
+        return callback(null, true);
+      }
+      console.warn(`[cors] Blocked request from origin ${origin}`);
+      return callback(new Error('Not allowed by CORS'));
+    },
+  })
+);
+app.options('*', cors());
 app.use(express.json());
 
 const CHANNEL_MATCHMAKING = 'matchmaking:global';
