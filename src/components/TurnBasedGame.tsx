@@ -279,18 +279,17 @@ export function TurnBasedGame({
         return;
       }
 
-      setPlayers((prev) =>
-        updated.players.map((player) => {
-          const existing = prev.find((p) => p.id === player.userId);
-          return {
-            id: player.userId,
-            username: player.username,
-            score: player.score ?? existing?.score ?? 0,
-            roundsPlayed: player.roundsPlayed ?? existing?.roundsPlayed ?? 0,
-          };
-        })
+      // Update players state from server
+      setPlayers(
+        updated.players.map((player) => ({
+          id: player.userId,
+          username: player.username,
+          score: player.score ?? 0,
+          roundsPlayed: player.roundsPlayed ?? 0,
+        }))
       );
 
+      // Update current player ID
       if (typeof updated.currentPlayerId !== 'undefined') {
         if (updated.currentPlayerId) {
           setCurrentPlayerId(updated.currentPlayerId);
@@ -299,6 +298,7 @@ export function TurnBasedGame({
         }
       }
 
+      // Update game state
       setGameState((prev) => {
         const me = updated.players.find((player) => player.userId === localUserId);
         return {
@@ -497,11 +497,7 @@ export function TurnBasedGame({
       });
 
       const newWordsFound = [...baseWords, { ...wordResult, score: totalScore }];
-      const playersSnapshot = players.map((player) =>
-        player.id === currentPlayer.id
-          ? { ...player, score: player.score + totalScore }
-          : { ...player }
-      );
+      const playersSnapshot = players.map((player) => ({ ...player }));
 
       setGameState((prev) => ({
         ...prev,
@@ -512,8 +508,6 @@ export function TurnBasedGame({
         selectedTiles: [],
         currentWord: '',
       }));
-
-      setPlayers(playersSnapshot);
 
       setIsValid(true);
       setLastScore(totalScore);
@@ -528,7 +522,7 @@ export function TurnBasedGame({
           wordsList: newWordsFound,
           word: wordResult.word,
           gemCount,
-          scoreAlreadyApplied: true,
+          scoreAlreadyApplied: false,
           playersSnapshot,
         });
       }, 1500);
