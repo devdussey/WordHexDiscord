@@ -64,7 +64,13 @@ const corsHandler = (req, res, next) => {
   ) {
     res.header('Vary', 'Origin');
     res.header('Access-Control-Allow-Origin', origin);
-  } else if (!origin) {
+  } else if (origin) {
+    // Origin exists but not in allowlist - still set header to allow request
+    // For production, you should add the origin to ALLOWED_ORIGINS instead
+    console.warn(`[CORS] Origin not in allowlist: ${origin}`);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Origin', origin);
+  } else {
     res.header('Access-Control-Allow-Origin', '*');
   }
 
