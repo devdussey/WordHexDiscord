@@ -127,15 +127,9 @@ export function TurnBasedGame({
     );
   }, [matchPlayers]);
 
-  useEffect(() => {
-    if (match?.currentPlayerId) {
-      setCurrentPlayerId(match.currentPlayerId);
-      return;
-    }
-    if (players.length && !players.some((player) => player.id === currentPlayerId)) {
-      setCurrentPlayerId(players[0].id);
-    }
-  }, [match?.currentPlayerId, players, currentPlayerId]);
+  // REMOVED: This useEffect was causing turn switching bugs by resetting currentPlayerId
+  // to the stale match.currentPlayerId value. The realtime handler already updates
+  // currentPlayerId correctly based on server state.
 
   useEffect(() => {
     if (matchPlayers.length || !lobbyId) {
