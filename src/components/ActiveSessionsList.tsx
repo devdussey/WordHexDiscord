@@ -85,18 +85,13 @@ export function ActiveSessionsList({ serverId, onJoinSession }: ActiveSessionsLi
                   Round {session.roundNumber} • {session.score} pts
                 </p>
               </div>
+              <div className="bg-green-500/20 px-3 py-1 rounded-full border border-green-500/50">
+                <p className="text-green-400 text-xs font-semibold">In Progress</p>
+              </div>
             </div>
-            <button
-              onClick={() => onJoinSession(session.id)}
-              className="w-full px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600
-                       hover:from-purple-700 hover:to-pink-700
-                       text-white rounded-lg font-semibold transition-all
-                       flex items-center justify-center gap-2
-                       transform hover:scale-105 active:scale-95"
-            >
-              <Play className="w-4 h-4" />
-              Join Game
-            </button>
+            <div className="text-center text-slate-400 text-sm py-2">
+              Spectator mode coming soon
+            </div>
           </div>
         ))}
       </div>
