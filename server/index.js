@@ -23,6 +23,7 @@ import {
   getPlayerStats,
   getMatchHistory,
   getActiveSessions,
+  updateMatchProgress,
   recordMatchResults,
   updateServerRecord,
   getServerRecord,
@@ -132,6 +133,14 @@ onStateEvent('match:started', (match) => {
   if (match?.lobbyId) {
     broadcast(`lobby:${match.lobbyId}`, { type: 'match:started', match });
   }
+  broadcast(`match:${match.id}`, { type: 'match:update', match });
+});
+
+onStateEvent('match:updated', (match) => {
+  if (match?.lobbyId) {
+    broadcast(`lobby:${match.lobbyId}`, { type: 'match:update', match });
+  }
+  broadcast(`match:${match.id}`, { type: 'match:update', match });
 });
 
 onStateEvent('match:completed', (match) => {
@@ -313,6 +322,41 @@ app.post('/api/game/sessions/:sessionId/complete', (req, res) => {
   } catch (error) {
     console.error('game/sessions complete error', error);
     res.status(500).json({ error: 'Failed to complete session', details: error.message });
+  }
+});
+
+app.post('/api/game/matches/:matchId/progress', (req, res) => {
+  try {
+    const { matchId } = req.params;
+    const {
+      players,
+      currentPlayerId,
+      gridData,
+      wordsFound,
+      roundNumber,
+      lastTurn,
+      gameOver,
+    } = req.body ?? {};
+
+    if (!matchId) {
+      return res.status(400).json({ error: 'matchId required' });
+    }
+
+    const match = updateMatchProgress({
+      matchId,
+      players,
+      currentPlayerId,
+      gridData,
+      wordsFound,
+      roundNumber,
+      lastTurn,
+      gameOver,
+    });
+
+    res.json({ match });
+  } catch (error) {
+    console.error('game/matches progress error', error);
+    res.status(500).json({ error: 'Failed to update match', details: error.message });
   }
 });
 

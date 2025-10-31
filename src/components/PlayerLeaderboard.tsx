@@ -18,7 +18,7 @@ export function PlayerLeaderboard({ players }: PlayerLeaderboardProps) {
     <div className="bg-purple-900/30 rounded-xl p-6 shadow-lg border-2 border-purple-700/50">
       <div className="flex items-center gap-2 mb-4">
         <Trophy className="w-6 h-6 text-yellow-400" />
-        <h3 className="text-xl font-bold text-white">Leaderboard</h3>
+        <h3 className="text-xl font-bold text-white">Wordhexers</h3>
       </div>
 
       <div className="space-y-3">

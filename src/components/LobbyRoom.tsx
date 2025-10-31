@@ -204,6 +204,29 @@ export function LobbyRoom({
             </div>
 
             <div className="space-y-3">
+              {amHost && (
+                <div
+                  className="bg-purple-950/60 p-4 rounded-lg border-2 border-dashed border-purple-500/60 text-center"
+                >
+                  <p className="text-purple-200 text-sm mb-2">
+                    Share this code with friends to invite them:
+                  </p>
+                  <div className="flex items-center justify-center gap-3 mb-3">
+                    <span className="text-white text-3xl font-mono tracking-widest">{lobbyCode}</span>
+                    <button
+                      onClick={copyCode}
+                      className="p-2 bg-purple-700/50 hover:bg-purple-600/60 rounded-lg transition-colors"
+                      title="Copy lobby code"
+                    >
+                      {copied ? <Check className="w-5 h-5 text-white" /> : <Copy className="w-5 h-5 text-white" />}
+                    </button>
+                  </div>
+                  <p className="text-purple-300 text-xs">
+                    Anyone with the code can join from the main menu using <span className="font-semibold">Join with Code</span>.
+                  </p>
+                </div>
+              )}
+
               {players.map((player) => (
                 <div
                   key={player.userId}

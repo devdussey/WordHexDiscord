@@ -4,12 +4,9 @@ import { MainMenu } from './components/MainMenu';
 import { TurnBasedGame } from './components/TurnBasedGame';
 import { Statistics } from './components/Statistics';
 import { Options } from './components/Options';
-import { Shop } from './components/Shop';
 import { LobbySelection } from './components/LobbySelection';
-import { MatchmakingQueue } from './components/MatchmakingQueue';
 import { LobbyRoom } from './components/LobbyRoom';
 import { Leaderboard } from './components/Leaderboard';
-import { MatchHistory } from './components/MatchHistory';
 import { useAuth } from './contexts/AuthContext';
 import { useError } from './contexts/ErrorContext';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
@@ -21,14 +18,11 @@ import type { LobbySummary, MatchSummary } from './types/api';
 type Page =
   | 'menu'
   | 'lobby-selection'
-  | 'matchmaking'
   | 'lobby-room'
   | 'play'
   | 'statistics'
   | 'leaderboard'
-  | 'match-history'
-  | 'options'
-  | 'shop';
+  | 'options';
 
 function App() {
   const { user, getUsername, loading } = useAuth();
@@ -58,11 +52,6 @@ function App() {
   const handlePlayClick = () => {
     setCurrentPage('lobby-selection');
   };
-
-  const handleJoinRandom = () => {
-    setCurrentPage('matchmaking');
-  };
-
   const handleStartLobby = async () => {
     try {
       const response = await api.lobby.create({
@@ -80,12 +69,6 @@ function App() {
     } catch (error) {
       logError(error, ErrorType.NETWORK, ErrorSeverity.HIGH, 'Could not create lobby');
     }
-  };
-
-  const handleMatchFound = (lobby: LobbySummary) => {
-      setActiveLobby(lobby);
-    setIsHost(false);
-    setCurrentPage('lobby-room');
   };
 
   const handleStartGame = (match: MatchSummary) => {
@@ -123,18 +106,9 @@ function App() {
       case 'lobby-selection':
         return (
           <LobbySelection
-            onJoinRandom={handleJoinRandom}
             onStartLobby={handleStartLobby}
             onJoinSession={handleJoinSession}
             onBack={() => setCurrentPage('menu')}
-            serverId={serverId}
-          />
-        );
-      case 'matchmaking':
-        return (
-          <MatchmakingQueue
-            onMatchFound={handleMatchFound}
-            onCancel={() => setCurrentPage('lobby-selection')}
             serverId={serverId}
           />
         );
@@ -173,12 +147,8 @@ function App() {
         return <Statistics onBack={() => setCurrentPage('menu')} />;
       case 'leaderboard':
         return <Leaderboard onBack={() => setCurrentPage('menu')} />;
-      case 'match-history':
-        return <MatchHistory onBack={() => setCurrentPage('menu')} />;
       case 'options':
         return <Options onBack={() => setCurrentPage('menu')} />;
-      case 'shop':
-        return <Shop onBack={() => setCurrentPage('menu')} />;
       default:
         return <MainMenu onNavigate={(page) => page === 'play' ? handlePlayClick() : setCurrentPage(page)} />;
     }

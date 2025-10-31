@@ -18,13 +18,65 @@ import type {
   RealtimeMessage,
 } from '../types/api';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-const WS_BASE =
-  import.meta.env.VITE_WS_URL ||
-  API_BASE.replace(/^http/i, (match) => (match.toLowerCase() === 'https' ? 'wss' : 'ws')).replace(
+export interface MatchProgressPayload {
+  players?: Array<{
+    userId: string;
+    username: string;
+    score: number;
+    roundsPlayed: number;
+    wordsFound?: string[];
+  }>;
+  currentPlayerId: string | null;
+  gridData?: unknown;
+  wordsFound?: unknown;
+  roundNumber?: number;
+  lastTurn?: Record<string, unknown> | null;
+  gameOver?: boolean;
+}
+
+function isLocalhost(hostname: string) {
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
+function resolveApiBase(): string {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl) {
+    return envUrl;
+  }
+  if (typeof window !== 'undefined' && window.location) {
+    const { protocol, origin, hostname } = window.location;
+    if (!protocol.startsWith('http')) {
+      return 'http://localhost:3001/api';
+    }
+    if (isLocalhost(hostname)) {
+      return 'http://localhost:3001/api';
+    }
+    return `${origin.replace(/\/$/, '')}/api`;
+  }
+  return 'http://localhost:3001/api';
+}
+
+function resolveWsBase(apiBase: string): string {
+  const envUrl = import.meta.env.VITE_WS_URL;
+  if (envUrl) {
+    return envUrl;
+  }
+  if (typeof window !== 'undefined' && window.location) {
+    const { protocol, host, hostname } = window.location;
+    if (isLocalhost(hostname)) {
+      return 'ws://localhost:3001/ws';
+    }
+    const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${wsProtocol}//${host}/ws`;
+  }
+  return apiBase.replace(/^http/i, (match) => (match.toLowerCase() === 'https' ? 'wss' : 'ws')).replace(
     /\/api\/?$/,
     '/ws'
   );
+}
+
+const API_BASE = resolveApiBase();
+const WS_BASE = resolveWsBase(API_BASE);
 
 let authToken: string | null = localStorage.getItem('wordhex_token');
 
@@ -159,6 +211,12 @@ export const api = {
     },
     completeSession(sessionId: string, payload: { score: number }) {
       return request<SessionResponse>(`/game/sessions/${sessionId}/complete`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    },
+    updateMatchProgress(matchId: string, payload: MatchProgressPayload) {
+      return request<MatchRecordResponse>(`/game/matches/${matchId}/progress`, {
         method: 'POST',
         body: JSON.stringify(payload),
       });

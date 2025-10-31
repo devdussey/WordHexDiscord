@@ -5,9 +5,18 @@ interface WordDisplayProps {
   isValid: boolean | null;
   showValidation: boolean;
   lastScore?: number;
+  isMyTurn: boolean;
+  currentPlayerName: string;
 }
 
-export function WordDisplay({ currentWord, isValid, showValidation, lastScore }: WordDisplayProps) {
+export function WordDisplay({
+  currentWord,
+  isValid,
+  showValidation,
+  lastScore,
+  isMyTurn,
+  currentPlayerName,
+}: WordDisplayProps) {
   return (
     <div className="bg-purple-900/30 rounded-xl p-6 shadow-lg border-2 border-purple-700/50 min-h-[100px] flex items-center justify-center">
       {currentWord ? (
@@ -33,7 +42,11 @@ export function WordDisplay({ currentWord, isValid, showValidation, lastScore }:
           )}
         </div>
       ) : (
-        <p className="text-purple-400 text-lg">Select tiles to spell a word...</p>
+        <p className="text-purple-400 text-lg">
+          {isMyTurn
+            ? 'Select tiles to spell a word...'
+            : `Waiting for ${currentPlayerName} to finish their turn`}
+        </p>
       )}
     </div>
   );

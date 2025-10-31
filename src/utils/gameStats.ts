@@ -5,6 +5,7 @@ interface Player {
   username: string;
   score: number;
   wordsFound?: string[];
+  roundsPlayed?: number;
 }
 
 interface SaveMatchParams {
@@ -25,6 +26,7 @@ export async function saveMatchResults({ matchId, players, gridData, wordsFound,
         username: player.username,
         score: player.score,
         wordsFound: player.wordsFound ?? [],
+        roundsPlayed: player.roundsPlayed ?? 0,
       })),
       gridData,
       wordsFound,

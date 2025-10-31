@@ -12,7 +12,8 @@ export default defineConfig({
       'Access-Control-Allow-Credentials': 'true',
       'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
       'Cross-Origin-Embedder-Policy': 'credentialless',
-      'Content-Security-Policy': "frame-ancestors 'self' https://discord.com https://*.discord.com"
+      'Content-Security-Policy':
+        "default-src 'self'; connect-src 'self' http://localhost:3001 ws://localhost:3001 wss://localhost:3001 https://*.railway.app wss://*.railway.app https://discord.com https://*.discord.com https://vitals.vercel-insights.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; frame-ancestors 'self' https://discord.com https://*.discord.com"
     },
     cors: true,
     hmr: {

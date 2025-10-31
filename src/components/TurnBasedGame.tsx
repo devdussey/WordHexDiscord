@@ -11,8 +11,14 @@ import { Send, Trash2, ArrowLeft, Settings } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { audioManager } from '../utils/audioManager';
 import { saveMatchResults } from '../utils/gameStats';
-import { api } from '../services/api';
-import type { MatchSummary, MatchPlayerSummary, LobbySummary } from '../types/api';
+import { api, realtime, MatchProgressPayload } from '../services/api';
+import type {
+  MatchSummary,
+  MatchPlayerSummary,
+  LobbySummary,
+  MatchTurnSummary,
+  RealtimeMessage,
+} from '../types/api';
 
 const MAX_ROUNDS_PER_PLAYER = 4;
 
@@ -42,6 +48,7 @@ export function TurnBasedGame({
   const { getUsername, user } = useAuth();
   const playerName = getUsername();
   const localUserId = user?.id || 'guest';
+  const isHost = _isHost;
   const [gameState, setGameState] = useState<GameState>({
     grid: generateGrid(),
     selectedTiles: [],
@@ -59,7 +66,7 @@ export function TurnBasedGame({
         id: player.userId,
         username: player.username,
         score: player.score ?? 0,
-        roundsPlayed: 0,
+        roundsPlayed: player.roundsPlayed ?? 0,
       }));
     }
 
@@ -73,16 +80,35 @@ export function TurnBasedGame({
     ];
   });
 
-  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
+  const [currentPlayerId, setCurrentPlayerId] = useState<string>(() => {
+    if (match?.currentPlayerId) {
+      return match.currentPlayerId;
+    }
+    if (match?.players?.length) {
+      return match.players[0].userId;
+    }
+    return localUserId;
+  });
   const [showValidation, setShowValidation] = useState(false);
   const [isValid, setIsValid] = useState<boolean | null>(null);
   const [lastScore, setLastScore] = useState<number | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
-  const currentPlayer = players[currentPlayerIndex];
+  const currentPlayer = useMemo(() => {
+    if (!players.length) {
+      return {
+        id: localUserId,
+        username: playerName,
+        score: 0,
+        roundsPlayed: 0,
+      };
+    }
+    return players.find((player) => player.id === currentPlayerId) ?? players[0];
+  }, [players, currentPlayerId, localUserId, playerName]);
   const matchPlayers: MatchPlayerSummary[] = useMemo(() => match?.players ?? [], [match?.players]);
   const lobbyId = match?.lobbyId ?? null;
+  const currentRound = Math.min((currentPlayer?.roundsPlayed ?? 0) + 1, MAX_ROUNDS_PER_PLAYER);
 
   useEffect(() => {
     if (!matchPlayers.length) {
@@ -94,12 +120,22 @@ export function TurnBasedGame({
         return {
           id: player.userId,
           username: player.username,
-          score: existing?.score ?? player.score ?? 0,
-          roundsPlayed: existing?.roundsPlayed ?? 0,
+          score: player.score ?? existing?.score ?? 0,
+          roundsPlayed: player.roundsPlayed ?? existing?.roundsPlayed ?? 0,
         };
       })
     );
   }, [matchPlayers]);
+
+  useEffect(() => {
+    if (match?.currentPlayerId) {
+      setCurrentPlayerId(match.currentPlayerId);
+      return;
+    }
+    if (players.length && !players.some((player) => player.id === currentPlayerId)) {
+      setCurrentPlayerId(players[0].id);
+    }
+  }, [match?.currentPlayerId, players, currentPlayerId]);
 
   useEffect(() => {
     if (matchPlayers.length || !lobbyId) {
@@ -112,17 +148,15 @@ export function TurnBasedGame({
         const response = await api.lobby.get(lobbyId);
         const lobbyPlayers = response?.players ?? [];
         if (!cancelled && lobbyPlayers.length) {
-          setPlayers((prev) =>
-            lobbyPlayers.map((player: LobbySummary['players'][number]) => {
-              const existing = prev.find((p) => p.id === player.userId);
-              return {
-                id: player.userId,
-                username: player.username,
-                score: existing?.score ?? 0,
-                roundsPlayed: existing?.roundsPlayed ?? 0,
-              };
-            })
+          setPlayers(
+            lobbyPlayers.map((player: LobbySummary['players'][number]) => ({
+              id: player.userId,
+              username: player.username,
+              score: 0,
+              roundsPlayed: 0,
+            }))
           );
+          setCurrentPlayerId(lobbyPlayers[0]?.userId ?? localUserId);
         }
       } catch (error) {
         console.error('Failed to load lobby players:', error);
@@ -133,7 +167,7 @@ export function TurnBasedGame({
     return () => {
       cancelled = true;
     };
-  }, [matchPlayers, lobbyId]);
+  }, [matchPlayers, lobbyId, localUserId]);
 
   useEffect(() => {
     if (matchPlayers.length) {
@@ -160,6 +194,7 @@ export function TurnBasedGame({
         },
       ];
     });
+    setCurrentPlayerId((prev) => prev ?? localUserId);
   }, [matchPlayers, localUserId, playerName]);
 
   const isMyTurn = currentPlayer.id === localUserId;
@@ -191,27 +226,33 @@ export function TurnBasedGame({
 
   // Update session status when game ends and save match results
   useEffect(() => {
-    if (gameState.gameOver) {
-      const finalizeGame = async () => {
-        try {
-          if (sessionId) {
-            await api.game.completeSession(sessionId, { score: gameState.score });
-          }
-          await saveMatchResults({
-            matchId: match?.id,
-            lobbyId: match?.lobbyId ?? null,
-            players: players.map((p) => ({ id: p.id, username: p.username, score: p.score })),
-            gridData: gameState.grid,
-            wordsFound: gameState.wordsFound,
-          });
-        } catch (error) {
-          console.error('Failed to finalize game:', error);
-        }
-      };
-
-      finalizeGame();
+    if (!gameState.gameOver || !isHost) {
+      return;
     }
-  }, [gameState.gameOver, sessionId, gameState.score, players, gameState.grid, gameState.wordsFound, match, serverId]);
+    const finalizeGame = async () => {
+      try {
+        if (sessionId) {
+          await api.game.completeSession(sessionId, { score: gameState.score });
+        }
+        await saveMatchResults({
+          matchId: match?.id,
+          lobbyId: match?.lobbyId ?? null,
+          players: players.map((p) => ({
+            id: p.id,
+            username: p.username,
+            score: p.score,
+            roundsPlayed: p.roundsPlayed,
+          })),
+          gridData: gameState.grid,
+          wordsFound: gameState.wordsFound,
+        });
+      } catch (error) {
+        console.error('Failed to finalize game:', error);
+      }
+    };
+
+    finalizeGame();
+  }, [gameState.gameOver, isHost, sessionId, gameState.score, players, gameState.grid, gameState.wordsFound, match]);
 
   useEffect(() => {
     return () => {
@@ -222,6 +263,61 @@ export function TurnBasedGame({
       }
     };
   }, [sessionId, gameState.score]);
+
+  useEffect(() => {
+    if (!match?.id) {
+      return;
+    }
+    const channel = `match:${match.id}`;
+
+    const handler = (message: RealtimeMessage) => {
+      if (message.type !== 'match:update') {
+        return;
+      }
+      const updated = message.match as MatchSummary | undefined;
+      if (!updated) {
+        return;
+      }
+
+      setPlayers((prev) =>
+        updated.players.map((player) => {
+          const existing = prev.find((p) => p.id === player.userId);
+          return {
+            id: player.userId,
+            username: player.username,
+            score: player.score ?? existing?.score ?? 0,
+            roundsPlayed: player.roundsPlayed ?? existing?.roundsPlayed ?? 0,
+          };
+        })
+      );
+
+      if (typeof updated.currentPlayerId !== 'undefined') {
+        if (updated.currentPlayerId) {
+          setCurrentPlayerId(updated.currentPlayerId);
+        } else if (updated.players.length) {
+          setCurrentPlayerId(updated.players[0].userId);
+        }
+      }
+
+      setGameState((prev) => {
+        const me = updated.players.find((player) => player.userId === localUserId);
+        return {
+          ...prev,
+          grid: (updated.gridData as Tile[][]) ?? prev.grid,
+          wordsFound: (updated.wordsFound as GameState['wordsFound']) ?? prev.wordsFound,
+          score: me?.score ?? prev.score,
+          gameOver: updated.status === 'completed' ? true : prev.gameOver,
+          selectedTiles: [],
+          currentWord: '',
+        };
+      });
+    };
+
+    realtime.subscribe(channel, handler);
+    return () => {
+      realtime.unsubscribe(channel, handler);
+    };
+  }, [match?.id, localUserId]);
 
   const handleTileSelect = useCallback((tile: Tile) => {
     if (!isMyTurn || gameState.gameOver) return;
@@ -267,63 +363,157 @@ export function TurnBasedGame({
     setIsValid(null);
   }, [isMyTurn, gameState.gameOver]);
 
-  const nextTurn = useCallback(() => {
-    setPlayers((prevPlayers) => {
-      const updatedPlayers = prevPlayers.map((p, idx) =>
-        idx === currentPlayerIndex ? { ...p, roundsPlayed: p.roundsPlayed + 1 } : p
-      );
+  const finalizeTurn = useCallback(
+    async ({
+      valid,
+      scoreDelta,
+      gridData,
+      wordsList,
+      word,
+      gemCount,
+      scoreAlreadyApplied,
+      playersSnapshot,
+    }: {
+      valid: boolean;
+      scoreDelta: number;
+      gridData: Tile[][];
+      wordsList: GameState['wordsFound'];
+      word?: string;
+      gemCount: number;
+      scoreAlreadyApplied: boolean;
+      playersSnapshot: Player[];
+    }) => {
+      if (!currentPlayer) {
+        return;
+      }
 
-      const nextIndex = (currentPlayerIndex + 1) % updatedPlayers.length;
-      setCurrentPlayerIndex(nextIndex);
+      const playerIndex = playersSnapshot.findIndex((p) => p.id === currentPlayer.id);
+      if (playerIndex === -1) {
+        return;
+      }
+
+      const updatedPlayers = playersSnapshot.map((player, index) => {
+        if (index !== playerIndex) {
+          return player;
+        }
+        const newScore =
+          scoreAlreadyApplied || !valid ? player.score : player.score + scoreDelta;
+        return {
+          ...player,
+          score: newScore,
+          roundsPlayed: player.roundsPlayed + 1,
+        };
+      });
 
       const allPlayersFinished = updatedPlayers.every(
         (player) => player.roundsPlayed >= MAX_ROUNDS_PER_PLAYER
       );
-      if (allPlayersFinished) {
-        setGameState((prevState) => ({ ...prevState, gameOver: true }));
-      }
+      const nextIndex = allPlayersFinished
+        ? playerIndex
+        : (playerIndex + 1) % updatedPlayers.length;
+      const nextPlayer = allPlayersFinished ? null : updatedPlayers[nextIndex];
 
-      return updatedPlayers;
-    });
-  }, [currentPlayerIndex]);
+      setPlayers(updatedPlayers);
+      setCurrentPlayerId(nextPlayer ? nextPlayer.id : updatedPlayers[playerIndex].id);
+
+      setGameState((prev) => {
+        const me = updatedPlayers.find((player) => player.id === localUserId);
+        return {
+          ...prev,
+          grid: gridData ?? prev.grid,
+          wordsFound: wordsList ?? prev.wordsFound,
+          score: me?.score ?? prev.score,
+          gameOver: allPlayersFinished ? true : prev.gameOver,
+          selectedTiles: [],
+          currentWord: '',
+        };
+      });
+
+      setShowValidation(false);
+      setLastScore(undefined);
+      setIsValid(null);
+
+      if (match?.id) {
+        const roundNumber = updatedPlayers.reduce(
+          (max, player) => Math.max(max, player.roundsPlayed),
+          1
+        );
+        const payload: MatchProgressPayload = {
+          players: updatedPlayers.map((player) => ({
+            userId: player.id,
+            username: player.username,
+            score: player.score,
+            roundsPlayed: player.roundsPlayed,
+          })),
+          currentPlayerId: nextPlayer ? nextPlayer.id : null,
+          gridData,
+          wordsFound: wordsList,
+          roundNumber,
+          gameOver: allPlayersFinished,
+          lastTurn: {
+            playerId: currentPlayer.id,
+            username: currentPlayer.username,
+            word,
+            scoreDelta: valid ? scoreDelta : 0,
+            gems: gemCount,
+            completedAt: new Date().toISOString(),
+          } as MatchTurnSummary,
+        };
+        try {
+          await api.game.updateMatchProgress(match.id, payload);
+        } catch (error) {
+          console.error('Failed to update match progress:', error);
+        }
+      }
+    },
+    [currentPlayer, localUserId, match?.id]
+  );
 
   const handleSubmitWord = useCallback(async () => {
-    if (!isMyTurn) return;
+    if (!isMyTurn || !currentPlayer) return;
 
-    const wordResult = await calculateScore(gameState.selectedTiles);
+    const activeTiles = gameState.selectedTiles;
+    if (!activeTiles.length) return;
+
+    const baseGrid = gameState.grid;
+    const baseWords = gameState.wordsFound;
+
+    const wordResult = await calculateScore(activeTiles);
+    const gemCount = activeTiles.filter((tile) => tile.isGem).length;
 
     if (wordResult) {
-      const gemBonus = gameState.selectedTiles.filter(t => t.isGem).length * 10;
+      const gemBonus = gemCount * 10;
       const totalScore = wordResult.score + gemBonus;
 
-      const newGrid = [...gameState.grid];
-      gameState.selectedTiles.forEach(tile => {
+      const newGrid = [...baseGrid];
+      activeTiles.forEach((tile) => {
         const randomLetter = ['E', 'T', 'A', 'O', 'I', 'N', 'S', 'R'][
           Math.floor(Math.random() * 8)
         ];
         newGrid[tile.row][tile.col] = {
           ...newGrid[tile.row][tile.col],
-          letter: randomLetter
+          letter: randomLetter,
         };
       });
 
-      const newWordsFound = [...gameState.wordsFound, { ...wordResult, score: totalScore }];
-      const newScore = gameState.score + totalScore;
-      const newGemsCollected = gameState.gemsCollected + gameState.selectedTiles.filter(t => t.isGem).length;
+      const newWordsFound = [...baseWords, { ...wordResult, score: totalScore }];
+      const playersSnapshot = players.map((player) =>
+        player.id === currentPlayer.id
+          ? { ...player, score: player.score + totalScore }
+          : { ...player }
+      );
 
-      setGameState(prev => ({
+      setGameState((prev) => ({
         ...prev,
         grid: newGrid,
-        score: newScore,
+        score: prev.score + totalScore,
         wordsFound: newWordsFound,
-        gemsCollected: newGemsCollected,
+        gemsCollected: prev.gemsCollected + gemCount,
         selectedTiles: [],
-        currentWord: ''
+        currentWord: '',
       }));
 
-      setPlayers(prev => prev.map((p, idx) =>
-        idx === currentPlayerIndex ? { ...p, score: p.score + totalScore } : p
-      ));
+      setPlayers(playersSnapshot);
 
       setIsValid(true);
       setLastScore(totalScore);
@@ -331,34 +521,49 @@ export function TurnBasedGame({
       audioManager.playWordSubmit(true);
 
       setTimeout(() => {
-        setShowValidation(false);
-        setLastScore(undefined);
-        nextTurn();
+        void finalizeTurn({
+          valid: true,
+          scoreDelta: totalScore,
+          gridData: newGrid,
+          wordsList: newWordsFound,
+          word: wordResult.word,
+          gemCount,
+          scoreAlreadyApplied: true,
+          playersSnapshot,
+        });
       }, 1500);
     } else {
+      const playersSnapshot = players.map((player) => ({ ...player }));
       setIsValid(false);
       setShowValidation(true);
       audioManager.playWordSubmit(false);
 
       setTimeout(() => {
-        setShowValidation(false);
-        setGameState(prev => ({
+        setGameState((prev) => ({
           ...prev,
           selectedTiles: [],
-          currentWord: ''
+          currentWord: '',
         }));
-        nextTurn();
+        void finalizeTurn({
+          valid: false,
+          scoreDelta: 0,
+          gridData: baseGrid,
+          wordsList: baseWords,
+          word: undefined,
+          gemCount,
+          scoreAlreadyApplied: false,
+          playersSnapshot,
+        });
       }, 1000);
     }
   }, [
+    isMyTurn,
+    currentPlayer,
     gameState.selectedTiles,
     gameState.grid,
-    gameState.score,
     gameState.wordsFound,
-    gameState.gemsCollected,
-    isMyTurn,
-    currentPlayerIndex,
-    nextTurn,
+    players,
+    finalizeTurn,
   ]);
 
   const handleClearSelection = useCallback(() => {
@@ -420,7 +625,7 @@ export function TurnBasedGame({
                 {isMyTurn ? '🎯 YOUR TURN!' : `⏳ ${currentPlayer.username.toUpperCase()}'S TURN`}
               </h3>
               <p className={isMyTurn ? 'text-green-200' : 'text-purple-300'}>
-                Round {currentPlayer.roundsPlayed + 1} of {MAX_ROUNDS_PER_PLAYER}
+                Round {currentRound} of {MAX_ROUNDS_PER_PLAYER}
               </p>
             </div>
             <div className="text-right">
@@ -437,6 +642,8 @@ export function TurnBasedGame({
               isValid={isValid}
               showValidation={showValidation}
               lastScore={lastScore}
+              isMyTurn={isMyTurn}
+              currentPlayerName={currentPlayer?.username ?? 'Player'}
             />
 
             <div className="flex items-center justify-center">

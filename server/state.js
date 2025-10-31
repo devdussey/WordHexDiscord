@@ -3,6 +3,8 @@ import { EventEmitter } from 'events';
 
 const events = new EventEmitter();
 
+const SESSION_TIMEOUT_MS = 3 * 60 * 1000;
+
 const state = {
   users: new Map(), // userId -> user
   lobbies: new Map(), // lobbyId -> lobby
@@ -46,8 +48,39 @@ const sanitizeSession = (session) => {
 
 const sanitizeMatch = (match) => {
   if (!match) return null;
-  return { ...match, players: match.players.map((p) => ({ ...p })) };
+  return {
+    ...match,
+    players: match.players.map((p) => ({
+      userId: p.userId,
+      username: p.username,
+      score: p.score,
+      wordsFound: p.wordsFound ?? [],
+      rank: p.rank ?? null,
+      roundsPlayed: p.roundsPlayed ?? 0,
+    })),
+    currentPlayerId: match.currentPlayerId ?? null,
+    roundNumber: match.roundNumber ?? 1,
+    lastTurn: match.lastTurn ?? null,
+    gridData: match.gridData ?? null,
+    wordsFound: match.wordsFound ?? [],
+  };
 };
+
+function cleanupStaleSessions() {
+  const now = Date.now();
+  Array.from(state.sessions.values()).forEach((session) => {
+    if (session.status !== 'active') {
+      return;
+    }
+    const lastUpdate = new Date(session.updatedAt || session.createdAt).getTime();
+    if (Number.isNaN(lastUpdate)) {
+      return;
+    }
+    if (now - lastUpdate > SESSION_TIMEOUT_MS) {
+      completeSession(session.id, { score: session.score });
+    }
+  });
+}
 
 function getOrCreateUserStats(userId) {
   const user = state.users.get(userId);
@@ -175,6 +208,7 @@ export function getMatchHistory(userId, limit = 20) {
 }
 
 export function getActiveSessions(serverId) {
+  cleanupStaleSessions();
   const sessions = Array.from(state.sessions.values())
     .filter((session) => session.serverId === serverId && session.status === 'active')
     .map(sanitizeSession);
@@ -318,11 +352,15 @@ export function startLobby({ lobbyId }) {
     status: 'in_progress',
     createdAt: now,
     updatedAt: now,
+    currentPlayerId: lobby.players[0]?.userId ?? null,
+    roundNumber: 1,
+    lastTurn: null,
     players: lobby.players.map((player) => ({
       userId: player.userId,
       username: player.username,
       score: 0,
       wordsFound: [],
+      roundsPlayed: 0,
       rank: null,
     })),
   };
@@ -330,6 +368,87 @@ export function startLobby({ lobbyId }) {
   events.emit('match:started', sanitizeMatch(match));
   events.emit('lobby:updated', sanitizeLobby(lobby));
   return { lobby: sanitizeLobby(lobby), match: sanitizeMatch(match) };
+}
+
+export function updateMatchProgress({
+  matchId,
+  players,
+  currentPlayerId,
+  gridData,
+  wordsFound,
+  roundNumber,
+  lastTurn,
+  gameOver,
+}) {
+  const match = state.matches.get(matchId);
+  if (!match) {
+    throw new Error('Match not found');
+  }
+
+  const now = new Date().toISOString();
+
+  if (Array.isArray(players) && players.length > 0) {
+    match.players = players.map((player) => ({
+      userId: player.userId,
+      username: player.username,
+      score: player.score ?? 0,
+      wordsFound: player.wordsFound ?? [],
+      roundsPlayed: player.roundsPlayed ?? 0,
+      rank: player.rank ?? null,
+    }));
+  }
+
+  if (typeof currentPlayerId !== 'undefined') {
+    match.currentPlayerId = currentPlayerId;
+  }
+
+  if (typeof roundNumber === 'number') {
+    match.roundNumber = roundNumber;
+  } else if (!match.roundNumber) {
+    match.roundNumber = 1;
+  }
+
+  if (typeof lastTurn !== 'undefined') {
+    match.lastTurn =
+      lastTurn === null
+        ? null
+        : {
+            ...lastTurn,
+            completedAt: lastTurn.completedAt ?? now,
+          };
+  }
+
+  if (typeof gridData !== 'undefined') {
+    match.gridData = gridData;
+  }
+
+  if (Array.isArray(wordsFound)) {
+    match.wordsFound = wordsFound;
+  }
+
+  if (Array.isArray(players)) {
+    players.forEach((player) => {
+      const sessionEntry = Array.from(state.sessions.values()).find(
+        (session) => session.userId === player.userId && session.status === 'active'
+      );
+      if (sessionEntry) {
+        sessionEntry.updatedAt = now;
+      }
+    });
+  }
+
+  match.updatedAt = now;
+
+  if (gameOver) {
+    match.status = 'completed';
+    match.completedAt = match.completedAt ?? now;
+    match.currentPlayerId = null;
+  }
+
+  state.matches.set(matchId, match);
+  const sanitized = sanitizeMatch(match);
+  events.emit('match:updated', sanitized);
+  return sanitized;
 }
 
 export function recordMatchResults({ matchId, players, gridData, wordsFound, lobbyId }) {
@@ -349,6 +468,7 @@ export function recordMatchResults({ matchId, players, gridData, wordsFound, lob
     username: player.username,
     score: player.score,
     wordsFound: player.wordsFound || [],
+    roundsPlayed: player.roundsPlayed ?? 0,
     rank: index + 1,
   }));
 
@@ -357,6 +477,8 @@ export function recordMatchResults({ matchId, players, gridData, wordsFound, lob
   match.completedAt = now;
   match.status = 'completed';
   match.updatedAt = now;
+  match.lastTurn = null;
+  match.currentPlayerId = null;
   state.matches.set(match.id, match);
 
   sortedPlayers.forEach((player, index) => {

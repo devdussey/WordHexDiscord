@@ -53,10 +53,20 @@ export interface MatchPlayerSummary {
   username: string;
   score: number;
   wordsFound: string[];
+  roundsPlayed?: number;
   rank: number | null;
 }
 
 export type MatchStatus = 'in_progress' | 'completed';
+
+export interface MatchTurnSummary {
+  playerId: string;
+  username: string;
+  word?: string;
+  scoreDelta: number;
+  gems?: number;
+  completedAt: string;
+}
 
 export interface MatchSummary {
   id: string;
@@ -66,6 +76,9 @@ export interface MatchSummary {
   updatedAt: string;
   completedAt?: string;
   players: MatchPlayerSummary[];
+  currentPlayerId?: string | null;
+  roundNumber?: number;
+  lastTurn?: MatchTurnSummary | null;
   gridData?: unknown;
   wordsFound?: string[];
 }

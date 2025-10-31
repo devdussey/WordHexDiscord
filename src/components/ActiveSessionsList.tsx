@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Users, Play } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { api, realtime } from '../services/api';
 import { useError } from '../contexts/ErrorContext';
 import { ErrorSeverity, ErrorType } from '../types/errors';
@@ -7,10 +7,9 @@ import type { GameSession, RealtimeMessage } from '../types/api';
 
 interface ActiveSessionsListProps {
   serverId: string;
-  onJoinSession: (sessionId: string) => void;
 }
 
-export function ActiveSessionsList({ serverId, onJoinSession }: ActiveSessionsListProps) {
+export function ActiveSessionsList({ serverId }: ActiveSessionsListProps) {
   const { logError } = useError();
   const [sessions, setSessions] = useState<GameSession[]>([]);
   const [loading, setLoading] = useState(true);
