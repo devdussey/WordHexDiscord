@@ -267,6 +267,26 @@ export function TurnBasedGame({
     setIsValid(null);
   }, [isMyTurn, gameState.gameOver]);
 
+  const nextTurn = useCallback(() => {
+    setPlayers((prevPlayers) => {
+      const updatedPlayers = prevPlayers.map((p, idx) =>
+        idx === currentPlayerIndex ? { ...p, roundsPlayed: p.roundsPlayed + 1 } : p
+      );
+
+      const nextIndex = (currentPlayerIndex + 1) % updatedPlayers.length;
+      setCurrentPlayerIndex(nextIndex);
+
+      const allPlayersFinished = updatedPlayers.every(
+        (player) => player.roundsPlayed >= MAX_ROUNDS_PER_PLAYER
+      );
+      if (allPlayersFinished) {
+        setGameState((prevState) => ({ ...prevState, gameOver: true }));
+      }
+
+      return updatedPlayers;
+    });
+  }, [currentPlayerIndex]);
+
   const handleSubmitWord = useCallback(async () => {
     if (!isMyTurn) return;
 
@@ -340,26 +360,6 @@ export function TurnBasedGame({
     currentPlayerIndex,
     nextTurn,
   ]);
-
-  const nextTurn = useCallback(() => {
-    setPlayers((prevPlayers) => {
-      const updatedPlayers = prevPlayers.map((p, idx) =>
-        idx === currentPlayerIndex ? { ...p, roundsPlayed: p.roundsPlayed + 1 } : p
-      );
-
-      const nextIndex = (currentPlayerIndex + 1) % updatedPlayers.length;
-      setCurrentPlayerIndex(nextIndex);
-
-      const allPlayersFinished = updatedPlayers.every(
-        (player) => player.roundsPlayed >= MAX_ROUNDS_PER_PLAYER
-      );
-      if (allPlayersFinished) {
-        setGameState((prevState) => ({ ...prevState, gameOver: true }));
-      }
-
-      return updatedPlayers;
-    });
-  }, [currentPlayerIndex]);
 
   const handleClearSelection = useCallback(() => {
     if (!isMyTurn) return;
