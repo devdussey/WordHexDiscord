@@ -407,13 +407,19 @@ export function TurnBasedGame({
           </button>
         </div>
 
-        <div className="bg-purple-900/30 rounded-xl p-4 mb-4 shadow-lg border-2 border-purple-700/50">
+        <div className={`rounded-xl p-6 mb-4 shadow-2xl border-4 transition-all ${
+          isMyTurn
+            ? 'bg-gradient-to-r from-green-600/40 to-emerald-600/40 border-green-400 animate-pulse'
+            : 'bg-purple-900/30 border-purple-700/50'
+        }`}>
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-2xl font-bold text-white">
-                {isMyTurn ? '🎯 Your Turn!' : `${currentPlayer.username}'s Turn`}
+              <h3 className={`text-3xl font-bold mb-2 ${
+                isMyTurn ? 'text-green-300' : 'text-white'
+              }`}>
+                {isMyTurn ? '🎯 YOUR TURN!' : `⏳ ${currentPlayer.username.toUpperCase()}'S TURN`}
               </h3>
-              <p className="text-purple-300">
+              <p className={isMyTurn ? 'text-green-200' : 'text-purple-300'}>
                 Round {currentPlayer.roundsPlayed + 1} of {MAX_ROUNDS_PER_PLAYER}
               </p>
             </div>

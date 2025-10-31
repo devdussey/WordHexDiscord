@@ -17,6 +17,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   getUsername: () => string;
   refreshIdentity: () => Promise<void>;
+  loginAsGuest: (username: string) => Promise<void>;
 }
 
 type DiscordIdentity = {
@@ -126,15 +127,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await initialize();
   }, [initialize]);
 
+  const loginAsGuest = useCallback(async (username: string) => {
+    setLoading(true);
+    try {
+      api.auth.clearToken();
+      persistProfile(null);
+      const payload = { username };
+      const response = await api.auth.register(payload);
+      const profile = response.user as UserProfile;
+      setUser(profile);
+      persistProfile(profile);
+      realtime.connect(profile.id, profile.username);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const contextValue = useMemo<AuthContextType>(
     () => ({
       user,
       loading,
       signOut,
       refreshIdentity,
+      loginAsGuest,
       getUsername: () => user?.username || 'Player',
     }),
-    [user, loading, signOut, refreshIdentity]
+    [user, loading, signOut, refreshIdentity, loginAsGuest]
   );
 
   return (
