@@ -16,7 +16,7 @@ interface AuthContextType {
   loading: boolean;
   signOut: () => Promise<void>;
   getUsername: () => string;
-  refreshIdentity: () => Promise<void>;
+  loginWithDiscord: () => Promise<void>;
   loginAsGuest: (username: string) => Promise<void>;
 }
 
@@ -61,71 +61,50 @@ function persistProfile(profile: UserProfile | null) {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(getStoredProfile());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(false);
 
   useEffect(() => {
     if (user) {
       realtime.connect(user.id, user.username);
+    } else {
+      realtime.disconnect();
     }
   }, [user]);
 
-  const registerWithServer = useCallback(async () => {
-    const identity = readDiscordIdentity();
-    const payload = {
-      discordId: identity?.id,
-      username:
-        identity?.global_name ||
-        identity?.username ||
-        `Player-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-    };
-    const response = await api.auth.register(payload);
-    const profile = response.user as UserProfile;
+  const completeLogin = useCallback((profile: UserProfile) => {
     setUser(profile);
     persistProfile(profile);
     realtime.connect(profile.id, profile.username);
   }, []);
 
-  const initialize = useCallback(async () => {
+  const loginWithDiscord = useCallback(async () => {
     setLoading(true);
     try {
-      if (user) {
-        realtime.connect(user.id, user.username);
-        setLoading(false);
-        return;
+      api.auth.clearToken();
+      const identity = readDiscordIdentity();
+      if (!identity || (!identity.id && !identity.username && !identity.global_name)) {
+        throw new Error('Discord identity not available');
       }
-      try {
-        await registerWithServer();
-      } catch (error) {
-        console.warn('Discord registration failed, creating guest', error);
-        const result = await api.auth.guest();
-        const profile = result.user as UserProfile;
-        setUser(profile);
-        persistProfile(profile);
-        realtime.connect(profile.id, profile.username);
-      }
+      const payload = {
+        discordId: identity.id,
+        username:
+          identity.global_name ||
+          identity.username ||
+          `Player-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+      };
+      const response = await api.auth.register(payload);
+      completeLogin(response.user as UserProfile);
     } finally {
       setLoading(false);
     }
-  }, [registerWithServer, user]);
-
-  useEffect(() => {
-    initialize();
-  }, [initialize]);
+  }, [completeLogin]);
 
   const signOut = useCallback(async () => {
     api.auth.clearToken();
     persistProfile(null);
     setUser(null);
     realtime.disconnect();
-    await initialize();
-  }, [initialize]);
-
-  const refreshIdentity = useCallback(async () => {
-    api.auth.clearToken();
-    persistProfile(null);
-    setUser(null);
-    await initialize();
-  }, [initialize]);
+  }, []);
 
   const loginAsGuest = useCallback(async (username: string) => {
     setLoading(true);
@@ -134,25 +113,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       persistProfile(null);
       const payload = { username };
       const response = await api.auth.register(payload);
-      const profile = response.user as UserProfile;
-      setUser(profile);
-      persistProfile(profile);
-      realtime.connect(profile.id, profile.username);
+      completeLogin(response.user as UserProfile);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [completeLogin]);
 
   const contextValue = useMemo<AuthContextType>(
     () => ({
       user,
       loading,
       signOut,
-      refreshIdentity,
+      loginWithDiscord,
       loginAsGuest,
       getUsername: () => user?.username || 'Player',
     }),
-    [user, loading, signOut, refreshIdentity, loginAsGuest]
+    [user, loading, signOut, loginWithDiscord, loginAsGuest]
   );
 
   return (

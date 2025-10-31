@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { User } from 'lucide-react';
 
 export function Login() {
-  const { user, loading, refreshIdentity, loginAsGuest } = useAuth();
+  const { user, loading, loginWithDiscord, loginAsGuest } = useAuth();
   const [username, setUsername] = useState('');
   const [isCustomUsername, setIsCustomUsername] = useState(false);
 
@@ -103,7 +103,7 @@ export function Login() {
           </button>
 
           <button
-            onClick={() => refreshIdentity()}
+            onClick={() => loginWithDiscord()}
             className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold py-4 rounded-lg transition-all transform hover:scale-105 active:scale-95 shadow-lg"
             disabled={loading}
           >

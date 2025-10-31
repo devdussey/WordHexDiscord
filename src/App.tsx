@@ -6,6 +6,7 @@ import { Statistics } from './components/Statistics';
 import { Options } from './components/Options';
 import { LobbySelection } from './components/LobbySelection';
 import { LobbyRoom } from './components/LobbyRoom';
+import { Login } from './components/Login';
 import { Leaderboard } from './components/Leaderboard';
 import { useAuth } from './contexts/AuthContext';
 import { useError } from './contexts/ErrorContext';
@@ -34,18 +35,15 @@ function App() {
   const [currentMatch, setCurrentMatch] = useState<MatchSummary | null>(null);
   const serverId = 'dev-server-123';
 
-  if (loading || !user) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-fuchsia-950 flex items-center justify-center p-8">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-4 border-purple-400 border-t-transparent mx-auto mb-6" />
-          <h2 className="text-3xl font-bold text-white">Connecting to WordHex…</h2>
-          <p className="text-purple-200 mt-2">Getting your player profile ready.</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) {\r\n    return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-fuchsia-950 flex items-center justify-center p-8">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-16 w-16 border-4 border-purple-400 border-t-transparent mx-auto mb-6" />
+        <h2 className="text-3xl font-bold text-white">Connecting to WordHex.</h2>
+        <p className="text-purple-200 mt-2">Getting your player profile ready.</p>
+      </div>\n    </div>\r\n  );\r\n}\r\n
 
+if (!user) {\r\n    return <Login />;\r\n}\r\n
   const playerName = getUsername();
   const playerId = user.id;
 
@@ -165,3 +163,5 @@ function App() {
 }
 
 export default App;
+
+
