@@ -38,45 +38,66 @@ function isLocalhost(hostname: string) {
   return hostname === 'localhost' || hostname === '127.0.0.1';
 }
 
-function resolveApiBase(): string {
-  const envUrl = import.meta.env.VITE_API_URL;
+let memoApiBase: string | null = null;
+let memoWsBase: string | null = null;
+
+function computeApiBase(): string {
+  const envUrl = import.meta.env.VITE_API_URL?.trim();
   if (envUrl) {
     return envUrl;
   }
-  if (typeof window !== 'undefined' && window.location) {
-    const { protocol, origin, hostname } = window.location;
-    if (!protocol.startsWith('http')) {
-      return 'http://localhost:3001/api';
-    }
+
+  if (typeof window !== 'undefined') {
+    const { origin, hostname } = window.location;
     if (isLocalhost(hostname)) {
       return 'http://localhost:3001/api';
     }
+    console.warn(
+      '[api] Missing VITE_API_URL; falling back to same-origin /api. Configure VITE_API_URL for production.'
+    );
     return `${origin.replace(/\/$/, '')}/api`;
   }
+
   return 'http://localhost:3001/api';
 }
 
-function resolveWsBase(apiBase: string): string {
-  const envUrl = import.meta.env.VITE_WS_URL;
+function computeWsBase(apiBase: string): string {
+  const envUrl = import.meta.env.VITE_WS_URL?.trim();
   if (envUrl) {
     return envUrl;
   }
-  if (typeof window !== 'undefined' && window.location) {
+
+  if (typeof window !== 'undefined') {
     const { protocol, host, hostname } = window.location;
     if (isLocalhost(hostname)) {
       return 'ws://localhost:3001/ws';
     }
     const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
+    console.warn(
+      '[api] Missing VITE_WS_URL; falling back to same-origin /ws. Configure VITE_WS_URL for production.'
+    );
     return `${wsProtocol}//${host}/ws`;
   }
+
   return apiBase.replace(/^http/i, (match) => (match.toLowerCase() === 'https' ? 'wss' : 'ws')).replace(
     /\/api\/?$/,
     '/ws'
   );
 }
 
-const API_BASE = resolveApiBase();
-const WS_BASE = resolveWsBase(API_BASE);
+function getApiBase(): string {
+  if (!memoApiBase) {
+    memoApiBase = computeApiBase();
+  }
+  return memoApiBase;
+}
+
+function getWsBase(): string {
+  if (!memoWsBase) {
+    memoWsBase = computeWsBase(getApiBase());
+  }
+  return memoWsBase;
+}
 
 let authToken: string | null = localStorage.getItem('wordhex_token');
 
@@ -98,12 +119,13 @@ function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     'Content-Type': 'application/json',
     ...normalizeHeaders(options.headers),
   };
+  const baseUrl = getApiBase();
 
   if (authToken) {
     headers.Authorization = `Bearer ${authToken}`;
   }
 
-  return fetch(`${API_BASE}${path}`, {
+  return fetch(`${baseUrl}${path}`, {
     ...options,
     headers,
   }).then(async (response) => {
@@ -299,7 +321,7 @@ class RealtimeClient {
     if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
       return;
     }
-    this.ws = new WebSocket(WS_BASE);
+    this.ws = new WebSocket(getWsBase());
     this.ws.onopen = () => {
       this.identify();
       this.resubscribeAll();
