@@ -49,28 +49,41 @@ const configuredOrigins = process.env.ALLOWED_ORIGINS
   : [];
 const allowedOrigins = [...defaultAllowedOrigins, ...configuredOrigins];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (
-        !origin ||
-        allowedOrigins.some((allowed) => {
-          if (allowed === origin) return true;
-          if (allowed.endsWith('*')) {
-            const base = allowed.slice(0, -1);
-            return origin.startsWith(base);
-          }
-          return false;
-        })
-      ) {
-        return callback(null, true);
+const corsHandler = (req, res, next) => {
+  const origin = req.headers.origin;
+  if (
+    origin &&
+    allowedOrigins.some((allowed) => {
+      if (allowed === origin) return true;
+      if (allowed.endsWith('*')) {
+        const base = allowed.slice(0, -1);
+        return origin.startsWith(base);
       }
-      console.warn(`[cors] Blocked request from origin ${origin}`);
-      return callback(new Error('Not allowed by CORS'));
-    },
-  })
-);
-app.options('*', cors());
+      return false;
+    })
+  ) {
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Origin', origin);
+  } else if (!origin) {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Client-Info'
+  );
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  return next();
+};
+
+app.use(corsHandler);
 app.use(express.json());
 
 const CHANNEL_MATCHMAKING = 'matchmaking:global';
